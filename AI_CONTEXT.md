@@ -100,6 +100,45 @@ reviewable code fixes automatically.
 
 ---
 
+## FILE-BY-FILE PIPELINE MAP
+
+This section maps each pipeline step to the exact Python file responsible for it.
+Use this as the ground truth when asking an LLM to work on a specific module.
+
+| Step | File | Function / Class | What it does |
+|------|------|------------------|--------------|
+| 1. Receive webhook | `main.py` | `POST /webhook/sentry` route | Accepts Sentry HTTP POST, returns 200 immediately, spawns async pipeline task |
+| 2. Parse payload | `sentry_parser.py` | `parse_sentry_webhook(payload)` | Extracts error_type, error_message, file_path, function_name, line_number, stack_trace from raw Sentry JSON |
+| 3. Redact PII | `redactor.py` | `redact(text)` | Strips emails, IPs, tokens, JWTs, credit cards from all text fields before anything else touches them |
+| 4. Fingerprint | `fingerprint.py` | `compute_fingerprint(...)` | Creates `sha256(error_type + file_path + function_name)` — the dedup key |
+| 5. Dedup check | `fingerprint.py` | `check_dedup(fingerprint, db)` | Looks up fingerprint in SQLite; returns `CREATE`, `SKIP`, or `RETRIGGER` |
+| 6. Persist issue | `database.py` | `create_issue(issue)` / `update_issue_status(...)` | Writes or updates the issue record in SQLite via aiosqlite |
+| 7. Classify | `classifier.py` | `classify(issue)` | Returns `code`, `infra`, `dependency`, or `unknown`. Only `code` proceeds to fix generation |
+| 8. Fetch source | `code_fetcher.py` | `fetch_code_context(issue)` | Uses PyGithub to download: main failing file + test file + up to 3 local imports |
+| 9. Generate fix | `llm_fixer.py` | `generate_fix(issue, code_context)` | Builds system + user prompt, calls GPT-4o (temp=0.2, JSON mode), parses `LLMFixResponse` |
+| 10. Confidence gate | `pipeline.py` | inside `run_pipeline()` | Checks `fix.confidence`: high/medium → create PR, low → store recommendation only |
+| 11. Create PR | `github_automation.py` | `create_fix_pr(issue, fix)` | Creates branch, commits each changed file, opens Draft PR on GitHub via PyGithub |
+| 12. Broadcast | `sse_manager.py` | `broadcast(event_type, payload)` | Emits SSE events at each stage so the dashboard updates in real-time |
+| 13. Serve dashboard | `main.py` | `GET /` | Serves `static/index.html` |
+| 14. SSE stream | `main.py` | `GET /stream` | SSE endpoint; dashboard's `EventSource` connects here |
+| 15. List issues | `main.py` | `GET /issues`, `GET /issues/{id}` | Returns SQLite issue records as JSON for dashboard to render |
+
+### Recurrence Flow (Post-Merge)
+```
+Same fingerprint fires AFTER PR was merged
+  → fingerprint.py: check_dedup() returns RETRIGGER
+  → database.py: mark status = "fix_ineffective", set previous_fix_id
+  → pipeline.py: re-runs full pipeline
+  → llm_fixer.py: injects previous_pr_url into user prompt so LLM knows prior fix failed
+  → github_automation.py: opens a new Draft PR referencing the old one
+```
+
+### Data Object That Flows Through All Modules
+Every module reads and writes the same `IssueRecord` Pydantic model (defined in `models.py`).
+The full JSON shape is documented in the **INTERNAL DATA CONTRACT** section below.
+
+---
+
 ## TECH STACK
 
 | Component          | Technology              |

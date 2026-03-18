@@ -83,6 +83,83 @@ and leaves step 8–9 for humans.
 
 ---
 
+## File-by-File Walkthrough
+
+A step-by-step trace of what happens and which file is responsible.
+Read this before opening any file — it gives you the full mental model.
+
+```
+Step 1 — main.py
+  Receives POST /webhook/sentry
+  Returns HTTP 200 immediately to Sentry
+  Spawns asyncio.create_task(run_pipeline(issue))
+
+Step 2 — sentry_parser.py → parse_sentry_webhook(payload: dict)
+  Input:  raw Sentry webhook JSON dict
+  Output: IssueRecord (partial — id, error fields, stack trace, file/function/line)
+  Logic:  iterates stack frames, skips node_modules, picks top app-level frame
+
+Step 3 — redactor.py → redact(text: str)
+  Input:  any string (error message, stack trace, etc.)
+  Output: same string with PII replaced by [REDACTED_*] tokens
+  Called: on every text field of the IssueRecord before anything else
+
+Step 4 — fingerprint.py → compute_fingerprint(error_type, file_path, function_name)
+  Input:  three strings
+  Output: sha256 hex string
+  Then:   check_dedup(fingerprint, db) → CREATE | SKIP | RETRIGGER
+
+Step 5 — database.py
+  create_issue(issue)         → INSERT into SQLite
+  update_issue_status(id, …)  → UPDATE status + any extra fields
+  get_issue_by_fingerprint()  → SELECT for dedup
+  list_issues() / get_issue() → for dashboard API
+
+Step 6 — classifier.py → classify(issue: IssueRecord)
+  Input:  IssueRecord
+  Output: "code" | "infra" | "dependency" | "unknown"
+  Gate:   only "code" continues to steps 7+
+
+Step 7 — code_fetcher.py → fetch_code_context(issue)
+  Input:  IssueRecord (needs file_path)
+  Output: dict { "main": str, "test": str, "imports": [str] }
+  Uses:   PyGithub to download files from the target GitHub repo
+
+Step 8 — llm_fixer.py → generate_fix(issue, code_context)
+  Input:  IssueRecord + dict of file contents
+  Output: LLMFixResponse { root_cause, confidence, files_changed, pr_title, pr_body }
+  Calls:  GPT-4o with temp=0.2, response_format=json_object
+  Retry:  once on JSON parse failure
+
+Step 9 — pipeline.py (confidence gate, inside run_pipeline)
+  high/medium confidence → call github_automation.create_fix_pr()
+  low confidence         → store recommendation, status = "recommendation_only"
+
+Step 10 — github_automation.py → create_fix_pr(issue, fix)
+  Input:  IssueRecord + LLMFixResponse
+  Output: PR URL string
+  Creates: branch → commits each changed file → opens Draft PR
+
+Step 11 — sse_manager.py → broadcast(event_type, payload)
+  Called: at every status transition by pipeline.py
+  Effect: connected dashboard EventSource receives real-time update
+
+Step 12 — main.py → GET /stream
+  Dashboard connects here via EventSource API
+  Receives all broadcast events as text/event-stream
+
+Step 13 — static/index.html
+  Vanilla JS + TailwindCSS (CDN)
+  Calls GET /issues on load, opens EventSource on /stream
+  Updates issue cards in real time as SSE events arrive
+```
+
+### The One Object That Flows Everywhere: `IssueRecord`
+Defined in `models.py`. Every module receives it, modifies a field or two,
+and passes it along. No module invents its own data shape.
+
+---
+
 ## Team Assignments
 
 ### Dev 1 — "The Pipeline" (Backend Orchestration)
@@ -204,15 +281,46 @@ echo "SENTRY_DSN=https://your-dsn@sentry.io/xxx" > .env
 npm run dev
 ```
 
-### Ngrok Setup (for Sentry webhooks)
-```bash
-# In a separate terminal
-ngrok http 8000
+### Webhook URL for Sentry (3 Options)
 
-# Copy the https URL (e.g., https://abc123.ngrok.io)
+#### Option A — ngrok (simplest for local testing)
+```bash
+ngrok http 8000
+# Copy the https URL e.g. https://abc123.ngrok.io
 # Go to Sentry → Settings → Integrations → Webhooks
-# Set webhook URL to: https://abc123.ngrok.io/webhook/sentry
+# Set to: https://abc123.ngrok.io/webhook/sentry
 ```
+> ⚠️ Free tier ngrok URL changes every restart. You must re-update Sentry each time.
+
+#### Option B — Vercel (stable URL, recommended for demo day)
+The engine is a FastAPI (ASGI) app. Vercel supports it via the `@vercel/python` runtime.
+
+```json
+// slothops-engine/vercel.json
+{
+  "builds": [{ "src": "main.py", "use": "@vercel/python" }],
+  "routes": [{ "src": "/(.*)", "dest": "main.py" }]
+}
+```
+
+```bash
+# From slothops-engine/
+vercel deploy --prod
+# Set env vars in Vercel dashboard (same as .env)
+```
+
+Sentry webhook becomes: `https://your-project.vercel.app/webhook/sentry` — **stable, no restarts.**
+
+> ⚠️ Vercel's filesystem is ephemeral. SQLite DB resets on each deploy.
+> For the hackathon demo this is fine — just don't redeploy mid-demo.
+> If you need persistence, use [Turso](https://turso.tech) (SQLite-compatible, free tier).
+
+#### Option C — Railway or Render (easiest persistent backend)
+Both support FastAPI with a stable URL + persistent disk in one click from GitHub.
+- [Railway](https://railway.app) — connect repo, set env vars, done
+- [Render](https://render.com) — same, free tier available
+
+
 
 ---
 
