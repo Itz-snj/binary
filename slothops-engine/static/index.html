@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SlothOps Engine 🦥</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+  
+  <header>
+    <div class="header-container">
+      <div class="logo">
+        <span class="emoji">🦥</span>
+        <h1>SlothOps</h1>
+        <div class="pulse-indicator"></div>
+        <span class="status-text">Listening for crashes</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="dashboard-header">
+      <h2>Recent Issues</h2>
+      <p>Automated remediation pipeline events.</p>
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="empty-state">
+      <i class="fa-solid fa-check-circle fa-2x"></i>
+      <p>No issues detected</p>
+      <span>Piping Sentry webhooks? Errors will appear here instantly.</span>
+    </div>
+
+    <!-- Feed Container -->
+    <div id="issues-feed" class="issues-feed"></div>
+  </main>
+
+  <!-- JS Logic -->
+  <script>
+    const feed = document.getElementById('issues-feed');
+    const emptyState = document.getElementById('empty-state');
+    const stateMap = new Map(); // Store state of mapped elements to avoid duplicate dom queries
+
+    // Map IssueStatus enum to a human readable label, icon, and CSS color class
+    const STATUS_MAP = {
+      'received': { label: 'Received', icon: 'fa-inbox', color: 'blue' },
+      'triaging': { label: 'Triaging', icon: 'fa-search', color: 'yellow' },
+      'classified': { label: 'Classified', icon: 'fa-tags', color: 'yellow' },
+      'fixing': { label: 'LLM Fixing', icon: 'fa-robot', color: 'purple', pulse: true },
+      'pr_created': { label: 'Draft PR Open', icon: 'fa-code-pull-request', color: 'green' },
+      'pr_merged': { label: 'Merged', icon: 'fa-code-merge', color: 'green' },
+      'ignored': { label: 'Ignored (Not Code)', icon: 'fa-ban', color: 'gray' },
+      'fixing_failed': { label: 'Fix Failed', icon: 'fa-triangle-exclamation', color: 'red' },
+      'pr_creation_failed': { label: 'PR Failed', icon: 'fa-triangle-exclamation', color: 'red' },
+      'fix_ineffective': { label: 'Re-triggered (Failed)', icon: 'fa-rotate-left', color: 'red' },
+      'recommendation_only': { label: 'Low Confidence (Rec Only)', icon: 'fa-circle-info', color: 'yellow' },
+    };
+
+    // Format ISO date
+    function formatTime(isoStr) {
+      if (!isoStr) return '';
+      const d = new Date(isoStr);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    // Creates the HTML element for an Issue Card
+    function createCard(issue) {
+      const card = document.createElement('div');
+      card.className = 'issue-card slide-in';
+      card.id = `issue-${issue.id}`;
+      
+      const statusConfig = STATUS_MAP[issue.status] || { label: issue.status, icon: 'fa-circle', color: 'gray' };
+      const pulseClass = statusConfig.pulse ? 'pulse-icon' : '';
+      
+      const confBadge = issue.confidence 
+        ? `<span class="badge conf-${issue.confidence}">${issue.confidence.toUpperCase()} Confidence</span>`
+        : '';
+        
+      const classBadge = issue.classification
+        ? `<span class="badge class-${issue.classification}">${issue.classification}</span>`
+        : '';
+
+      const prLink = issue.fix_pr_url
+        ? `<a href="${issue.fix_pr_url}" target="_blank" class="pr-link"><i class="fa-brands fa-github"></i> View PR</a>`
+        : '';
+
+      const occurrences = issue.occurrence_count > 1 
+        ? `<span class="badge occurrence-badge">${issue.occurrence_count}x</span>` 
+        : '';
+        
+      card.innerHTML = `
+        <div class="card-header">
+          <div class="card-title">
+            <span class="error-type">${issue.error_type || 'Unknown Error'}</span>
+            ${occurrences}
+          </div>
+          <div class="card-status status-${statusConfig.color}">
+            <i class="fa-solid ${statusConfig.icon} ${pulseClass}"></i>
+            <span>${statusConfig.label}</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <p class="error-msg">${issue.error_message || 'No message provided'}</p>
+          <p class="location"><i class="fa-regular fa-file-code"></i> ${issue.file_path || '?'} : ${issue.function_name || '?'}()</p>
+        </div>
+        <div class="card-footer">
+          <div class="badges">
+            ${classBadge}
+            ${confBadge}
+          </div>
+          <div class="actions">
+            ${prLink}
+            <span class="time">${formatTime(issue.created_at)}</span>
+          </div>
+        </div>
+      `;
+      return card;
+    }
+
+    // Update an existing card's DOM
+    function updateCard(card, issue) {
+      const statusConfig = STATUS_MAP[issue.status] || { label: issue.status, icon: 'fa-circle', color: 'gray' };
+      const pulseClass = statusConfig.pulse ? 'pulse-icon' : '';
+      
+      const statusContainer = card.querySelector('.card-status');
+      statusContainer.className = `card-status status-${statusConfig.color}`;
+      statusContainer.innerHTML = `<i class="fa-solid ${statusConfig.icon} ${pulseClass}"></i> <span>${statusConfig.label}</span>`;
+
+      if (issue.classification) {
+         let badges = card.querySelector('.badges');
+         if (!badges.querySelector(`.class-${issue.classification}`)) {
+            badges.innerHTML = `<span class="badge class-${issue.classification}">${issue.classification}</span>` + badges.innerHTML;
+         }
+      }
+      
+      if (issue.confidence) {
+         let badges = card.querySelector('.badges');
+         // replace old confidence if exists
+         const oldConf = badges.querySelector('[class*="conf-"]');
+         if (oldConf) oldConf.remove();
+         badges.innerHTML += `<span class="badge conf-${issue.confidence}">${issue.confidence.toUpperCase()} Confidence</span>`;
+      }
+      
+      if (issue.fix_pr_url && !card.querySelector('.pr-link')) {
+         const actions = card.querySelector('.actions');
+         const prHtml = `<a href="${issue.fix_pr_url}" target="_blank" class="pr-link"><i class="fa-brands fa-github"></i> View PR</a>`;
+         actions.insertAdjacentHTML('afterbegin', prHtml);
+      }
+      
+      if (issue.occurrence_count > 1) {
+          const title = card.querySelector('.card-title');
+          let occ = title.querySelector('.occurrence-badge');
+          if (occ) {
+              occ.innerText = `${issue.occurrence_count}x`;
+          } else {
+              title.innerHTML += `<span class="badge occurrence-badge">${issue.occurrence_count}x</span>`;
+          }
+      }
+    }
+
+    // Initial Fetch (Historical Data)
+    async function fetchHistory() {
+      try {
+        const res = await fetch('/issues');
+        const data = await res.json();
+        
+        if (data && data.length > 0) {
+          emptyState.style.display = 'none';
+          // Data from backend is newest first. We render them directly.
+          data.forEach(issue => {
+            const card = createCard(issue);
+            // remove slide-in for historical load so it doesn't animate 50 cards at once
+            card.classList.remove('slide-in'); 
+            feed.appendChild(card);
+          });
+        }
+      } catch (e) {
+        console.error("Failed to load history:", e);
+      }
+    }
+
+    // Live EventSource (SSE)
+    function setupSSE() {
+      const source = new EventSource('/stream');
+      
+      source.onmessage = (event) => {
+        const payload = JSON.parse(event.data);
+        console.log("SSE Event Received:", payload);
+        emptyState.style.display = 'none';
+
+        // 1. Updating an existing issue
+        if (payload.id) {
+            const existingCard = document.getElementById(`issue-${payload.id}`);
+            if (existingCard) {
+                // If it's a status update, update the DOM elements
+                updateCard(existingCard, payload);
+                // Flash animation
+                existingCard.style.animation = 'none';
+                existingCard.offsetHeight; // trigger reflow
+                existingCard.style.animation = 'flash 1s';
+                return;
+            }
+        }
+        
+        // 2. We received an update for a bug we haven't rendered yet 
+        // (usually the first 'status_update' -> received status from pipeline)
+        // Fetch the full issue record via API to build the card
+        if (payload.id && !document.getElementById(`issue-${payload.id}`)) {
+            fetch(`/issues/${payload.id}`)
+              .then(res => res.json())
+              .then(issue => {
+                  if(issue.error) return;
+                  const newCard = createCard(issue);
+                  feed.prepend(newCard); // Add to top
+              });
+        }
+      };
+      
+      source.onerror = (e) => {
+          console.warn("SSE disconnected. Reconnecting...");
+      };
+    }
+
+    // Init
+    fetchHistory().then(setupSSE);
+
+  </script>
+</body>
+</html>

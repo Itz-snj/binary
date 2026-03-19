@@ -76,6 +76,13 @@ async def serve_dashboard():
         return FileResponse(index_path)
     return JSONResponse({"message": "Dashboard not built yet. See Phase 3."})
 
+@app.get("/style.css")
+async def serve_css():
+    css_path = os.path.join(STATIC_DIR, "style.css")
+    if os.path.exists(css_path):
+        return FileResponse(css_path)
+    return JSONResponse({"error": "Not found"}, status_code=404)
+
 
 @app.post("/webhook/sentry")
 async def receive_sentry_webhook(request: Request):
