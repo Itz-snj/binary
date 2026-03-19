@@ -1,147 +1,87 @@
-# SlothOps
+# SlothOps 🦥
 
-> **Production-aware automated bug remediation.** SlothOps watches your app for crashes via Sentry, fetches the relevant source code from GitHub, asks GPT-4o to fix it, and opens a Draft PR — all before a developer wakes up.
+> **Production-aware automated bug remediation.** 
+> SlothOps watches your applications for crashes via Sentry, intelligently fetces the relevant source code from GitHub, asks GPT-4o to engineer a fix, and opens a Draft Pull Request — all before a developer even wakes up.
 
-```
-Sentry alert → AI reads the code → Draft PR waiting for you
+```text
+Sentry error alert → AI analyzes root cause → Draft PR waiting for your review
 ```
 
 ---
 
-## Repos in This Monorepo
+## 🌟 Key Features
 
-| Folder | Language | Purpose |
+*   **Zero-Touch Triaging:** Instantly categorises errors into `code`, `infrastructure`, or `dependency` issues, ignoring alerts that code changes cannot fix.
+*   **Privacy First Data Handling:** Automatically redacts PII and secrets (Emails, API Keys, Tokens, JWTs, IPs, etc.) from the stack trace *before* the data ever reaches an LLM.
+*   **Intelligent Context Gathering:** Scans the failing file and automatically fetches associated test files and local imports from GitHub to provide the LLM with full context.
+*   **Smart Deduplication:** Calculates a SHA-256 fingerprint for every trace. Duplicates are skipped if a fix is already pending, or re-triggered if a previous fix failed in production.
+*   **Automated PR Creation:** Automatically branches from `main`, stages the fixed code, and opens a Draft Pull Request enriched with a confidence rating and failure metadata.
+
+---
+
+## 🏗️ Architecture Stack
+
+| Component | Technology | Purpose |
 |---|---|---|
-| `slothops-engine/` | Python 3.11 + FastAPI | The bot: webhook receiver, pipeline, LLM, GitHub automation |
-| `slothops-demo-app/` | Node.js + TypeScript | Target app with 3 intentional bugs for demo |
+| **Engine (Bot)** | Python 3.11, FastAPI | Core pipeline orchestrator, webhook receiver, and SSE broadcaster. |
+| **Database** | SQLite, `aiosqlite` | Asynchronous, lightweight persistence layer for tracing issue statuses. |
+| **Logic Layer** | OpenAI (GPT-4o), PyGithub | LLM fix generation and direct AST/repository manipulation. |
+| **Demo App** | Node.js, TypeScript | (Phase 3) A target application with intentional bugs to demonstrate the bot. |
 
 ---
 
-## How It Works (10-second version)
+## 🚀 How It Works (End-to-End)
 
-1. A bug crashes in the demo app → Sentry fires a webhook
-2. The engine receives it, strips PII, fingerprints the error
-3. If it's a **code** bug (not infra), it fetches the failing source file from GitHub
-4. GPT-4o generates a fix with root cause analysis
-5. If confidence is **high/medium**, a Draft PR is opened automatically
-6. Dashboard shows the issue moving through each stage in real-time
-
----
-
-## Detailed Pipeline Walkthrough
-
-| Step | File | What it does |
-|---|---|---|
-| 1 | `main.py` | Receives `POST /webhook/sentry`, returns 200, spawns async task |
-| 2 | `sentry_parser.py` | Extracts error type, message, file, function, line from payload |
-| 3 | `redactor.py` | Strips PII (emails, IPs, tokens, JWTs) before anything touches LLM |
-| 4 | `fingerprint.py` | `sha256(error_type + file_path + function_name)` — dedup check |
-| 5 | `database.py` | Creates/updates issue record in SQLite via `aiosqlite` |
-| 6 | `classifier.py` | `code` / `infra` / `dependency` / `unknown` — only `code` proceeds |
-| 7 | `code_fetcher.py` | Downloads failing file + test file + imports via PyGithub |
-| 8 | `llm_fixer.py` | Builds prompt, calls GPT-4o (temp 0.2, JSON mode), parses response |
-| 9 | `github_automation.py` | Creates branch, commits fix, opens Draft PR |
-| 10 | `sse_manager.py` | Broadcasts status updates to dashboard at each stage |
+1. **Detection:** A bug crashes in the target app, causing Sentry to fire a realtime webhook.
+2. **Ingestion & Redaction:** The engine parses the payload, identifies the top application frame, and strips all PII from the stack trace.
+3. **Classification:** The engine decides if this is a `code` bug. Infrastructure blips (like a killed database connection) are ignored.
+4. **Context Fetching:** The bot downloads the failing source file, its test file, and relevant local dependencies directly from GitHub.
+5. **Fix Generation:** GPT-4o acts as the engineer, providing root-cause analysis and a complete code diff.
+6. **Automation:** A neat, formatted Draft PR is automatically staged and opened on GitHub for human review.
 
 ---
 
-## Deploying the Engine (Sentry Webhook URL)
+## 🛠️ Quick Start (Engine)
 
-### Option A — ngrok (local dev, free)
-```bash
-ngrok http 8000
-# Set Sentry webhook to: https://<hash>.ngrok.io/webhook/sentry
-# Note: URL changes on every ngrok restart (free tier)
-```
+You can spin up the SlothOps engine locally.
 
-### Option B — Vercel (recommended for hackathon demo)
-> ⚠️ The engine is a **FastAPI app** (WSGI/ASGI), not a static site.  
-> You can deploy it to Vercel using the `@vercel/python` runtime with a `vercel.json` adapter.  
-> This gives you a **stable, persistent URL** — ideal for Sentry webhooks.
-
-```json
-// vercel.json (place in slothops-engine/)
-{
-  "builds": [{ "src": "main.py", "use": "@vercel/python" }],
-  "routes": [{ "src": "/(.*)", "dest": "main.py" }]
-}
-```
-
-Set environment variables in Vercel dashboard (same as `.env`):  
-`OPENAI_API_KEY`, `GITHUB_TOKEN`, `GITHUB_REPO`, `DATABASE_PATH`, etc.
-
-Sentry webhook URL becomes: `https://your-project.vercel.app/webhook/sentry` — **stable forever**.
-
-> 💡 **SQLite note:** Vercel's filesystem is ephemeral. For demo purposes this is fine (data resets on redeploy). For persistence, swap to a free [Turso](https://turso.tech) SQLite-compatible DB.
-
-### Option C — Railway / Render (easiest persistent backend)
-Both support Python/FastAPI with a stable URL and persistent disk. One-click deploys from GitHub.
-
----
-
-## Quick Start
-
-### Engine
 ```bash
 cd slothops-engine
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill in your keys
+cp .env.example .env   # Fill in your OPENAI_API_KEY and GITHUB_TOKEN
 uvicorn main:app --reload --port 8000
 ```
 
-### Demo App
-```bash
-cd slothops-demo-app
-npm install
-cp .env.example .env   # fill in SENTRY_DSN
-npm run dev
-```
-
-### Trigger a bug manually (no live Sentry needed)
+### Try it out manually
+You can trigger the pipeline locally using a provided Sentry fixture payload:
 ```bash
 curl -X POST http://localhost:8000/webhook/sentry \
   -H "Content-Type: application/json" \
-  -d @slothops-engine/tests/fixtures/sentry_webhook.json
+  -d @tests/fixtures/sentry_webhook.json
 ```
 
 ---
 
-## Environment Variables
+## 🎯 Project Roadmap & Definition of Done
 
-| Variable | Where | Description |
-|---|---|---|
-| `OPENAI_API_KEY` | engine | GPT-4o access |
-| `GITHUB_TOKEN` | engine | PAT with `repo` + `write:discussion` scopes |
-| `GITHUB_REPO` | engine | `org/slothops-demo-app` |
-| `DATABASE_PATH` | engine | Default: `./slothops.db` |
-| `PORT` | engine | Default: `8000` |
-| `SENTRY_WEBHOOK_SECRET` | engine | Optional signature verification |
-| `SENTRY_DSN` | demo-app | From Sentry project settings |
+Status of the implementation phases (Engine & Demo Application):
 
----
+**Phase 1 & 2: The Core Engine (Completed) ✅**
+- [x] Webhook receiving endpoint (via FastAPI) is functional.
+- [x] Sentry payloads are parsed safely (filtering `node_modules`).
+- [x] Redactor strictly removes all PII/Secrets patterns.
+- [x] Classifier accurately distinguishes code vs. infrastructure errors.
+- [x] Fingerprint deduplication (and 10-minute cooldown logic) functional.
+- [x] Code fetcher retrieves relative files via GitHub API.
+- [x] LLM writes the fix and explains the root cause.
+- [x] GitHub module creates branch, commits, and opens Draft PR safely.
+- [x] 100% test passing locally (64/64 automated tests).
 
-## Demo Scenarios
-
-| # | Scenario | How to trigger | Expected outcome |
-|---|---|---|---|
-| 1 | Null reference | `GET /users/999/profile` | Draft PR with optional chaining fix |
-| 2 | Infra error | Kill database, hit any endpoint | Logged as `infra`, no PR |
-| 3 | Recurrence | Merge PR from #1, re-trigger same error | `fix_ineffective` → new deeper PR |
-
----
-
-## Definition of Done
-
-- [ ] Buggy endpoint triggers Sentry
-- [ ] Sentry webhook reaches FastAPI
-- [ ] Error classified correctly (code vs infra)
-- [ ] Source file fetched from GitHub
-- [ ] LLM generates fix with root cause
-- [ ] Draft PR opens on GitHub
-- [ ] GitHub Actions CI passes on PR
-- [ ] Dashboard shows real-time stage updates
-- [ ] Duplicate errors don't create duplicate PRs
-- [ ] Infra errors classified and skipped
-- [ ] All 3 demo bugs produce valid fixes
-- [ ] Unit tests pass (classifier, redactor, fingerprint, parser)
+**Phase 3: Demo Application & Dashboard (Upcoming) ⏳**
+- [ ] Build front-end dashboard UI (`static/index.html`) using SSE live statuses.
+- [ ] Develop `slothops-demo-app` (Express/TypeScript) with 3 intentional bugs.
+- [ ] Integrate Sentry SDK into Demo App.
+- [ ] Connect the live Sentry integration to the Engine webhook.
+- [ ] GitHub Actions CI passes on auto-generated PRs.
+- [ ] All 3 demo bugs are perfectly fixed by the auto-generated PRs.
