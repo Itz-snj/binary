@@ -1,6 +1,6 @@
 """
-SlothOps Engine — LLM Fixer
-Constructs prompts, calls OpenAI GPT-4o, and parses the JSON response
+SlothOps Engine — LLM Fixer (Gemini Version)
+Constructs prompts, calls Google Gemini 2.5 Pro, and parses the JSON response
 into a validated LLMFixResponse.
 """
 
@@ -10,7 +10,8 @@ import json
 import logging
 from typing import Optional
 
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 from models import IssueRecord, LLMFixResponse
 from redactor import redact
@@ -35,23 +36,7 @@ RULES:
     and explain why.
 11. You MUST return valid JSON matching the specified format.
 12. You MUST return the COMPLETE file content for each changed file,
-    not just the diff or snippet.
-
-RESPONSE FORMAT (strict JSON):
-{
-  "root_cause": "one paragraph explanation of why this bug happens",
-  "confidence": "high | medium | low",
-  "files_changed": [
-    {
-      "path": "src/routes/users.ts",
-      "original_content": "full original file content",
-      "fixed_content": "full fixed file content",
-      "explanation": "what was changed and why"
-    }
-  ],
-  "pr_title": "fix: short description of the fix",
-  "pr_body": "markdown formatted PR description"
-}"""
+    not just the diff or snippet."""
 
 
 def _build_user_prompt(
@@ -111,12 +96,12 @@ TEST FILE ({test_label}):
 IMPORTANT: A previous fix was attempted (PR: {previous_pr_url}) but the same error has reoccurred.
 The previous fix was insufficient. Please analyze why and propose a deeper fix."""
 
-    prompt += "\n\nGenerate the fix following the rules and response format specified."
+    prompt += "\n\nGenerate the fix following the rules and strict JSON response format specified."
     return prompt
 
 
 def _parse_response(raw: str) -> LLMFixResponse:
-    """Parse the raw JSON string from GPT-4o into a validated model."""
+    """Parse the raw JSON string from Gemini into a validated model."""
     data = json.loads(raw)
     return LLMFixResponse(**data)
 
@@ -124,50 +109,51 @@ def _parse_response(raw: str) -> LLMFixResponse:
 def generate_fix(
     issue: IssueRecord,
     code_context: dict[str, str],
-    openai_api_key: str,
+    gemini_api_key: str,
     previous_pr_url: Optional[str] = None,
 ) -> LLMFixResponse:
     """
-    Call GPT-4o to generate a fix for the given issue.
+    Call Gemini 2.5 Pro to generate a fix for the given issue.
 
     Raises:
         RuntimeError: If the LLM returns invalid JSON twice.
     """
-    client = OpenAI(api_key=openai_api_key)
+    client = genai.Client(api_key=gemini_api_key)
     user_prompt = _build_user_prompt(issue, code_context, previous_pr_url)
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ]
+    # Convert Pydantic scheme to type for Gemini structured output
+    config_dict = {
+        "temperature": 0.2,
+        "response_mime_type": "application/json",
+        "system_instruction": SYSTEM_PROMPT,
+        # Pydantic native schema translation
+        "response_schema": LLMFixResponse.model_json_schema(),
+    }
+
+    config = types.GenerateContentConfig(**config_dict)
 
     for attempt in range(2):
-        logger.info("Calling GPT-4o (attempt %d)...", attempt + 1)
+        logger.info("Calling Gemini 2.5 Pro (attempt %d)...", attempt + 1)
+        
+        # We send only the user prompt because system_instruction is in the config
+        messages = [{"role": "user", "parts": [{"text": user_prompt}]}]
+        if attempt > 0:
+            # We add a retry context if json parsing failed manually, 
+            # though structured output usually prevents this.
+            messages.append({"role": "user", "parts": [{"text": "Your previous response was not valid JSON. Please retry."}]})
 
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=messages,
-            temperature=0.2,
-            response_format={"type": "json_object"},
+        response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=messages,
+            config=config,
         )
 
-        raw_content = response.choices[0].message.content or ""
+        raw_content = response.text or ""
 
         try:
             return _parse_response(raw_content)
         except (json.JSONDecodeError, Exception) as exc:
             logger.warning("JSON parse failed (attempt %d): %s", attempt + 1, exc)
-            if attempt == 0:
-                # Retry with a follow-up message asking for valid JSON
-                messages.append({"role": "assistant", "content": raw_content})
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "Your previous response was not valid JSON. "
-                        "Please return ONLY the valid JSON object matching "
-                        "the specified response format. No extra text."
-                    ),
-                })
 
     raise RuntimeError(
         f"LLM returned invalid JSON after 2 attempts for issue {issue.id}"

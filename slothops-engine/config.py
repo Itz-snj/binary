@@ -18,8 +18,8 @@ def _require(key: str) -> str:
     return value
 
 
-# --- Required (will raise at import time if absent) ---
-OPENAI_API_KEY: str = _require("OPENAI_API_KEY")
+# ── Required keys ────────────────────────────────────────────────────────
+GEMINI_API_KEY = _require("GEMINI_API_KEY")
 GITHUB_TOKEN: str = _require("GITHUB_TOKEN")
 GITHUB_REPO: str = _require("GITHUB_REPO")
 

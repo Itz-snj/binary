@@ -39,7 +39,7 @@ async def _update(
 async def run_pipeline(
     issue: IssueRecord,
     db_path: str,
-    openai_api_key: str,
+    gemini_api_key: str,
     github_token: str,
     github_repo: str,
 ) -> None:
@@ -129,8 +129,8 @@ async def run_pipeline(
             fix = generate_fix(
                 issue=issue,
                 code_context=code_context,
-                openai_api_key=openai_api_key,
-                previous_pr_url=previous_pr_url,
+                gemini_api_key=gemini_api_key,
+                previous_pr_url=issue.previous_fix_id,
             )
         except RuntimeError as exc:
             logger.error("[%s] LLM fix failed: %s", issue.id[:8], exc)

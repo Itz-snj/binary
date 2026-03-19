@@ -80,13 +80,13 @@ class FileChange(BaseModel):
     """One file changed by the LLM fix."""
 
     path: str
-    original_content: str = ""
+    original_content: str
     fixed_content: str
     explanation: str
 
 
 class LLMFixResponse(BaseModel):
-    """Parsed JSON response from GPT-4o."""
+    """Parsed JSON response from Gemini 2.5 Pro."""
 
     root_cause: str
     confidence: str  # high | medium | low

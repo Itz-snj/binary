@@ -23,11 +23,11 @@ from models import IssueRecord
 from pipeline import run_pipeline
 from sentry_parser import parse_sentry_webhook
 from sse_manager import subscribe
-
 # ── Load env early (before config.py import to avoid crash in dev) ───
+from dotenv import load_dotenv
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 DATABASE_PATH = os.getenv("DATABASE_PATH", "./slothops.db")
@@ -114,7 +114,7 @@ async def receive_sentry_webhook(request: Request):
         run_pipeline(
             issue=issue,
             db_path=DATABASE_PATH,
-            openai_api_key=OPENAI_API_KEY,
+            gemini_api_key=GEMINI_API_KEY,
             github_token=GITHUB_TOKEN,
             github_repo=GITHUB_REPO,
         )
