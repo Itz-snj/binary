@@ -91,27 +91,89 @@ Tests fixture parsing (all fields extracted correctly), `node_modules` frame fil
 
 ---
 
+## External API Modules (Phase 2)
+
+### `code_fetcher.py`
+Downloads source files from the target GitHub repo using PyGithub. For a crashing file like `src/routes/users.ts`, it fetches:
+1. The main file itself
+2. The associated test file (convention: `src/` → `tests/`, `.ts` → `.test.ts`)
+3. Up to 3 local imports parsed from the source (e.g. `import ... from './services/userService'`)
+
+Handles GitHub 404s gracefully. Max 5 files total.
+
+### `llm_fixer.py`
+Constructs the prompt and calls GPT-4o. Contains:
+- The **exact** system prompt from AI_CONTEXT.md (12 strict rules)
+- A user prompt builder that slots in error details, redacted stack trace, and all fetched source files
+- JSON response parsing into `LLMFixResponse`
+- One-retry logic: if GPT-4o returns bad JSON, it sends a follow-up message. If it fails again, the pipeline marks the issue `fixing_failed`.
+
+### `github_automation.py`
+Creates branches, commits fixes, and opens Draft PRs. Steps:
+1. Create branch `slothops/fix-{slugified-path}-{short-id}` from `main`
+2. For each changed file: fetch current SHA → update file on branch
+3. Open a **Draft** PR with rich Markdown body (root cause, confidence badge, error table, per-file explanations, auto-generated warning footer)
+4. Add `needs-careful-review` label if confidence is medium
+
+### `sse_manager.py`
+Manages Server-Sent Events for the dashboard. Uses a fan-out pattern: one `asyncio.Queue` per connected browser client. `broadcast()` pushes events to all clients. `subscribe()` yields messages for a single connection.
+
+---
+
+## Server & Orchestration (Phase 2)
+
+### `pipeline.py`
+The conductor. Runs the full pipeline for a single issue in order:
+1. Redact → 2. Fingerprint + Dedup → 3. Classify → 4. Fetch code → 5. LLM fix → 6. Confidence gate → 7. Create PR
+
+Updates the database status and broadcasts SSE events at every stage. Uses **granular error handling**: LLM fails → `fixing_failed`, GitHub fails → `pr_creation_failed` (never catch-all).
+
+### `main.py`
+The FastAPI web server. Endpoints:
+- `POST /webhook/sentry` — receives webhook, returns 200 immediately, spawns `asyncio.create_task(run_pipeline(...))` in background
+- `GET /issues` — list all tracked issues
+- `GET /issues/{id}` — single issue detail
+- `GET /stream` — SSE endpoint for dashboard
+- `GET /health` — health check
+- `GET /` — serves `static/index.html`
+
+Runs `init_db()` on startup via FastAPI's lifespan context.
+
+---
+
 ## How Everything Connects
 
 ```
-Sentry webhook JSON
+ HTTP POST from Sentry
        │
        ▼
- sentry_parser.py  →  IssueRecord (models.py)
+   main.py          →  receives webhook, spawns async task
        │
        ▼
-   redactor.py     →  strips PII from stack_trace
+  sentry_parser.py  →  IssueRecord (models.py)
        │
        ▼
-  fingerprint.py   →  computes hash, checks dedup via database.py
+   redactor.py      →  strips PII from stack_trace
        │
        ▼
-  classifier.py    →  sets classification field
+  fingerprint.py    →  computes hash, checks dedup
        │
        ▼
-   database.py     →  persists to SQLite
+  classifier.py     →  code | infra | dependency | unknown
        │
-   (Phase 2: code_fetcher → llm_fixer → github_automation)
+     (code only)
+       ▼
+  code_fetcher.py   →  downloads source files from GitHub
+       │
+       ▼
+   llm_fixer.py     →  GPT-4o generates fix JSON
+       │
+       ▼
+  github_automation  →  creates branch + commits + Draft PR
+       │
+       ▼
+   database.py      →  persists state at every step
+   sse_manager.py   →  broadcasts live updates to dashboard
 ```
 
 ---
@@ -120,8 +182,17 @@ Sentry webhook JSON
 
 ```bash
 cd slothops-engine
-pip install -r requirements.txt
+source venv/bin/activate
 python -m pytest tests/ -v
 ```
 
 All 4 test files should pass with **zero API keys required**.
+
+## Starting the Server
+
+```bash
+cd slothops-engine
+source venv/bin/activate
+cp .env.example .env   # fill in real keys
+uvicorn main:app --reload --port 8000
+```
