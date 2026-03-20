@@ -158,3 +158,36 @@ def generate_fix(
     raise RuntimeError(
         f"LLM returned invalid JSON after 2 attempts for issue {issue.id}"
     )
+
+def generate_infra_recommendation(issue: IssueRecord) -> str:
+    """Uses Gemini 1.5 Flash to generate a DevOps recommendation for infra errors."""
+    prompt = f"""
+You are SlothOps, a Senior DevOps AI. 
+A critical infrastructure error has occurred in production. 
+
+ERROR SIGNATURE:
+Type: {issue.error_type}
+Message: {issue.error_message}
+Occurrences: {issue.occurrence_count}
+
+STACK TRACE:
+{issue.stack_trace or "No stack trace available."}
+
+Provide a concise, 1-paragraph actionable recommendation for the DevOps team.
+Do NOT output JSON. Just output plain text markdown. 
+"""
+    # Assuming gemini_api_key is available or we pass it? Wait, where do we get the API key?
+    # Actually, pipeline.py passes issue to generate_infra_recommendation, but not the API key!
+    # I need to get the API key. Let's import config or use load_dotenv.
+    import os
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+    
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            contents=prompt,
+        )
+        return response.text or "Check infrastructure dependencies and network connectivity."
+    except Exception as e:
+        logger.error("[%s] Infra recommendation failed: %s", issue.id[:8], e)
+        return "Automatic recommendation failed due to API limits."

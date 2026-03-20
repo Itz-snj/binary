@@ -43,12 +43,27 @@ app.get("/debug-sentry", function mainHandler(req, res) {
   throw new Error("My first Sentry error!");
 });
 
-// --- 4. Sentry Error Handler (must be after all controllers, before fallback error handlers) ---
-// Note: Sentry.setupExpressErrorHandler sets up BOTH the request handler and error handler automatically in v8+
-// if you pass it the app instance at the top. But if manual is needed, we'd do it here. 
-// With v8+, setupExpressErrorHandler handles it.
+// --- 4. Vercel Serverless Freeze Protection ---
+// AWS Lambdas freeze the Node.js process the exact microsecond a response is sent.
+// We MUST explicitly force Sentry to finish uploading the crash report over the network
+// BEFORE we let Express resolve the 500 error, otherwise Sentry never receives the data.
+app.use(async (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("Caught Unhandled Exception! Flushing to Sentry...");
+  Sentry.captureException(err);
+  try {
+    await Sentry.flush(2000); // 2-second timeout
+    console.log("Successfully flushed to Sentry.io!");
+  } catch (e) {
+    console.error("Sentry flush failed:", e);
+  }
+  res.status(500).json({ message: "Serverless Crash", error: err.message });
+});
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`SlothOps Demo App running on port ${PORT}`);
-});
+if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`SlothOps Demo App running on port ${PORT}`);
+  });
+}
+
+export default app;

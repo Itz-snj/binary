@@ -21,13 +21,14 @@ def compute_fingerprint(
     error_type: str | None,
     file_path: str | None,
     function_name: str | None,
+    error_message: str | None = None,
 ) -> str:
     """
     Return a hex SHA-256 hash of the concatenated inputs.
 
-    ``fingerprint = sha256(error_type + file_path + function_name)``
+    ``fingerprint = sha256(error_type + file_path + function_name + error_message)``
     """
-    raw = "".join(part or "" for part in (error_type, file_path, function_name))
+    raw = "".join(part or "" for part in (error_type, file_path, function_name, error_message))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 

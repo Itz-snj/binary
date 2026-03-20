@@ -24,6 +24,7 @@ INFRA_SIGNALS: list[str] = [
     "SIGKILL",
     "SIGTERM",
     "connection refused",
+    "connection dropped",
     "timeout exceeded",
     "certificate",
     "DNS",

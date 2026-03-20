@@ -104,6 +104,13 @@ def parse_sentry_webhook(payload: dict) -> IssueRecord:
     if app_frames:
         top_frame = app_frames[-1]  # last frame = top of call stack
         file_path = top_frame.get("filename") or top_frame.get("abs_path")
+        
+        if file_path:
+            if "/var/task/" in file_path:
+                file_path = file_path.split("/var/task/")[-1]
+            if file_path.endswith(".js"):
+                file_path = file_path[:-3] + ".ts"
+                
         function_name = top_frame.get("function")
         line_number = top_frame.get("lineno")
 

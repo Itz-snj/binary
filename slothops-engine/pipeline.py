@@ -17,7 +17,7 @@ from code_fetcher import fetch_code_context
 import asyncio
 from fingerprint import check_dedup, compute_fingerprint
 from github_automation import create_fix_pr
-from llm_fixer import generate_fix, generate_infra_recommendation, generate_infra_recommendation
+from llm_fixer import generate_fix, generate_infra_recommendation
 from models import DedupeAction, IssueRecord, IssueStatus
 from redactor import redact
 from sse_manager import broadcast
@@ -60,7 +60,7 @@ async def run_pipeline(
         logger.info("[%s] Redaction complete", issue.id[:8])
 
         # ── 2. Fingerprint + Dedup ───────────────────────────────────
-        fp = compute_fingerprint(issue.error_type, issue.file_path, issue.function_name)
+        fp = compute_fingerprint(issue.error_type, issue.file_path, issue.function_name, issue.error_message)
         issue.fingerprint = fp
 
         existing = await db.get_issue_by_fingerprint(fp, db_path)
