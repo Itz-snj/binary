@@ -68,8 +68,7 @@ def _build_pr_body(issue: IssueRecord, fix: LLMFixResponse) -> str:
 def create_fix_pr(
     issue: IssueRecord,
     fix: LLMFixResponse,
-    github_token: str,
-    github_repo: str,
+    repo,
 ) -> str:
     """
     Create a branch, commit the fixed files, and open a Draft PR.
@@ -79,8 +78,6 @@ def create_fix_pr(
     Raises:
         RuntimeError: If GitHub operations fail.
     """
-    g = Github(github_token)
-    repo = g.get_repo(github_repo)
 
     # ── Branch name ──────────────────────────────────────────────────
     slug = _slugify_path(issue.file_path or "unknown")

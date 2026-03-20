@@ -41,8 +41,10 @@ async def run_pipeline(
     issue: IssueRecord,
     db_path: str,
     gemini_api_key: str,
-    github_token: str,
     github_repo: str,
+    github_token: str | None = None,
+    github_app_id: str | None = None,
+    github_app_private_key: str | None = None,
 ) -> None:
     """
     Execute the full bug remediation pipeline for one issue.
@@ -120,13 +122,37 @@ async def run_pipeline(
             logger.info("[%s] Not a code error — ignored", issue.id[:8])
             return
 
-        # ── 4. Fetch code context from GitHub ────────────────────────
+        # ── 4. Build GitHub Client & Fetch context ───────────────────
         await _update(issue, db_path, IssueStatus.FIXING.value)
+
+        try:
+            from github import Github, Auth
+            integration = await db.get_integration(issue.workspace_id, db_path)
+            
+            # Prefer GitHub App Installation
+            if integration and integration.github_installation_id and github_app_id and github_app_private_key:
+                auth = Auth.AppAuth(github_app_id, github_app_private_key)
+                gi = Github(auth=auth)
+                g = gi.get_app().get_installation(int(integration.github_installation_id)).get_github_for_installation()
+                logger.info("[%s] Authenticated dynamically via GitHub App Installation ID", issue.id[:8])
+            # Fallback to Personal Access Token
+            elif github_token:
+                g = Github(github_token)
+                logger.info("[%s] Authenticated using legacy Personal Access Token", issue.id[:8])
+            else:
+                logger.error("[%s] Missing GitHub Credentials", issue.id[:8])
+                await _update(issue, db_path, "fixing_failed", root_cause="Missing GitHub credentials (PAT or App Installation)")
+                return
+                
+            repo = g.get_repo(github_repo)
+        except Exception as exc:
+            logger.error("[%s] GitHub client init failed: %s", issue.id[:8], exc)
+            await _update(issue, db_path, "fixing_failed", root_cause=str(exc))
+            return
 
         code_context = fetch_code_context(
             file_path=issue.file_path,
-            github_token=github_token,
-            github_repo=github_repo,
+            repo=repo,
         )
         logger.info("[%s] Fetched %d file(s) from GitHub", issue.id[:8], len(code_context))
 
@@ -175,8 +201,7 @@ async def run_pipeline(
             pr_url = create_fix_pr(
                 issue=issue,
                 fix=fix,
-                github_token=github_token,
-                github_repo=github_repo,
+                repo=repo,
             )
         except RuntimeError as exc:
             logger.error("[%s] PR creation failed: %s", issue.id[:8], exc)

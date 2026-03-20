@@ -28,8 +28,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", None)
 GITHUB_REPO = os.getenv("GITHUB_REPO", "")
+GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", None)
+GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "").replace("\\n", "\n") if os.getenv("GITHUB_APP_PRIVATE_KEY") else None
 DATABASE_PATH = os.getenv("DATABASE_PATH", "./slothops.db")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
@@ -172,12 +174,40 @@ async def receive_sentry_webhook(workspace_id: str, request: Request):
             issue=issue,
             db_path=DATABASE_PATH,
             gemini_api_key=GEMINI_API_KEY,
-            github_token=GITHUB_TOKEN,
             github_repo=GITHUB_REPO,
+            github_token=GITHUB_TOKEN,
+            github_app_id=GITHUB_APP_ID,
+            github_app_private_key=GITHUB_APP_PRIVATE_KEY,
         )
     )
 
     return JSONResponse({"status": "accepted", "issue_id": issue.id})
+
+@app.post("/webhook/github")
+async def receive_github_webhook(request: Request):
+    """
+    Receives GitHub App install/uninstall Background Webhooks.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
+
+    action = payload.get("action")
+    if action == "created" and "installation" in payload:
+        installation_id = str(payload["installation"]["id"])
+        
+        # When moving fully to SaaS, the Setup Action URL tracks `workspace_id` via a state integer.
+        # For the engine, we automatically bind new app installs to the `default_workspace`.
+        from models import Integration
+        integration = Integration(
+            workspace_id="default_workspace", 
+            github_installation_id=installation_id
+        )
+        await db.upsert_integration(integration, DATABASE_PATH)
+        logger.info(f"GitHub App explicitly granted permissions! Bootstrapped Installation ID {installation_id} into Integrations table natively.")
+
+    return {"status": "ok"}
 
 
 @app.get("/issues")

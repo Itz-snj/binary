@@ -99,8 +99,7 @@ def _fetch_file(repo, path: str) -> Optional[str]:
 
 def fetch_code_context(
     file_path: str | None,
-    github_token: str,
-    github_repo: str,
+    repo,
     source_content_override: str | None = None,
 ) -> dict[str, str]:
     """
@@ -118,9 +117,6 @@ def fetch_code_context(
     """
     if not file_path:
         return {}
-
-    g = Github(github_token)
-    repo = g.get_repo(github_repo)
 
     context: dict[str, str] = {}
 

@@ -94,14 +94,23 @@ It contains 3 intentional bugs for the demo. The existing test suite must PASS o
   - URL: `https://your-engine-url/webhook/sentry`
   - Enable: `issue` events
 - [ ] Test webhook delivery using Sentry's built-in test tool
+- [x] Test webhook delivery using Sentry's built-in test tool
 
 ---
 
 ## Definition of Done
 
 - [ ] `GET /users/999/profile` → crashes → Sentry captures it
-- [ ] Sentry fires webhook to engine within 30 seconds
+- [x] Sentry fires webhook to engine within 30 seconds
 - [x] Bug 1, 2, 3 are all triggerable on demand
 - [x] All existing tests (`npm test`) pass on `main`
 - [x] GitHub Actions CI is green on `main`
 - [ ] A SlothOps-generated PR passes CI checks
+
+---
+
+## 5. GitHub App (`@slothops-bot`)
+- [ ] Register new GitHub App via developer console
+- [ ] Configure `.env` with App ID and Private Key
+- [x] Implement short-lived installation token fetching in `pipeline.py`
+- [x] Handle GitHub Webhooks for automated repo onboarding

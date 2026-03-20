@@ -259,6 +259,28 @@ async def get_user_workspaces(user_id: str, db_path: str = _DEFAULT_DB):
                 res.append(Workspace(**d))
             return res
 
+async def get_integration(workspace_id: str, db_path: str = _DEFAULT_DB):
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM integrations WHERE workspace_id = ?", (workspace_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                from models import Integration
+                return Integration(**dict(row))
+            return None
+
+async def upsert_integration(integration, db_path: str = _DEFAULT_DB) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """INSERT INTO integrations (workspace_id, github_installation_id, sentry_webhook_secret) 
+               VALUES (?, ?, ?) 
+               ON CONFLICT(workspace_id) DO UPDATE SET 
+               github_installation_id=excluded.github_installation_id,
+               sentry_webhook_secret=excluded.sentry_webhook_secret""",
+            (integration.workspace_id, integration.github_installation_id, integration.sentry_webhook_secret)
+        )
+        await db.commit()
+
 
 async def list_issues(workspace_id: str, db_path: str = _DEFAULT_DB) -> list[IssueRecord]:
     """Return all issues for a specific workspace ordered by most recent first."""
