@@ -122,15 +122,16 @@ async def create_issue(issue: IssueRecord, db_path: str = _DEFAULT_DB) -> None:
         await db.execute(
             """
             INSERT INTO issues (
-                id, fingerprint, error_type, error_message, file_path,
+                id, workspace_id, fingerprint, error_type, error_message, file_path,
                 function_name, line_number, stack_trace, raw_payload,
                 occurrence_count, classification, confidence, status,
                 fix_pr_url, fix_pr_branch, root_cause, recommendation,
                 previous_fix_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 issue.id,
+                issue.workspace_id,
                 issue.fingerprint,
                 issue.error_type,
                 issue.error_message,
@@ -250,6 +251,20 @@ async def get_user_workspaces(user_id: str, db_path: str = _DEFAULT_DB):
             "SELECT w.* FROM workspaces w JOIN workspace_users wu ON w.id = wu.workspace_id WHERE wu.user_id = ?",
             (user_id,)
         ) as cursor:
+            rows = await cursor.fetchall()
+            res = []
+            from models import Workspace
+            for row in rows:
+                d = dict(row)
+                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
+                res.append(Workspace(**d))
+            return res
+
+async def list_workspaces(db_path: str = _DEFAULT_DB):
+    """Return all workspaces (used for auto-linking GitHub installations)."""
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM workspaces") as cursor:
             rows = await cursor.fetchall()
             res = []
             from models import Workspace

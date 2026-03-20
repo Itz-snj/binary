@@ -9,6 +9,7 @@ Each stage updates the DB status and broadcasts an SSE event.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 import database as db
@@ -41,8 +42,6 @@ async def run_pipeline(
     issue: IssueRecord,
     db_path: str,
     gemini_api_key: str,
-    github_repo: str,
-    github_token: str | None = None,
     github_app_id: str | None = None,
     github_app_private_key: str | None = None,
 ) -> None:
@@ -126,34 +125,48 @@ async def run_pipeline(
         await _update(issue, db_path, IssueStatus.FIXING.value)
 
         try:
-            from github import Github, Auth
+            from github import Github, GithubIntegration, Auth
+            
+            if not github_app_id or not github_app_private_key:
+                logger.error("[%s] GitHub App not configured (GITHUB_APP_ID or GITHUB_APP_PRIVATE_KEY missing from .env)", issue.id[:8])
+                await _update(issue, db_path, "fixing_failed", root_cause="GitHub App not configured. Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY in .env")
+                return
+
+            # Load private key — support both inline and file path
+            private_key = github_app_private_key
+            if private_key and os.path.isfile(private_key):
+                with open(private_key, "r") as f:
+                    private_key = f.read()
+            
+            # Get the installation_id from the workspace's integrations table
             integration = await db.get_integration(issue.workspace_id, db_path)
             
-            if integration and integration.github_installation_id and github_app_id and github_app_private_key:
-                auth = Auth.AppAuth(github_app_id, github_app_private_key)
-                gi = Github(auth=auth)
-                installation = gi.get_app().get_installation(int(integration.github_installation_id))
-                g = installation.get_github_for_installation()
-                
-                # Architecturally correct SaaS flow: Zero configuration. 
-                # We dynamically ask GitHub's API which repository the user installed us on!
-                installed_repos = [r for r in installation.get_repos()]
-                if not installed_repos:
-                    raise Exception("User has not granted this GitHub App access to any repositories.")
-                
-                # Fetch the full interactive Repo object using the Installation Auth client
-                repo = g.get_repo(installed_repos[0].full_name)
-                logger.info("[%s] Authenticated dynamically! Auto-mapped to Repo: %s", issue.id[:8], repo.full_name)
-                
-            # Fallback to Personal Access Token
-            elif github_token and github_repo:
-                g = Github(github_token)
-                repo = g.get_repo(github_repo)
-                logger.info("[%s] Authenticated using legacy Personal Access Token", issue.id[:8])
-            else:
-                logger.error("[%s] Missing GitHub Credentials", issue.id[:8])
-                await _update(issue, db_path, "fixing_failed", root_cause="Missing GitHub credentials (PAT or App Installation)")
+            if not integration or not integration.github_installation_id:
+                logger.error("[%s] No GitHub App installation linked for workspace %s. "
+                             "User must install the GitHub App on their repository first.",
+                             issue.id[:8], issue.workspace_id)
+                await _update(issue, db_path, "fixing_failed", 
+                              root_cause="GitHub App not installed. Go to Settings in your SlothOps dashboard and install the GitHub App on your repository.")
                 return
+
+            installation_id = int(integration.github_installation_id)
+            auth = Auth.AppAuth(github_app_id, private_key)
+            gi = GithubIntegration(auth=auth)
+            installation_auth = auth.get_installation_auth(installation_id)
+            g = Github(auth=installation_auth)
+            
+            # Dynamically discover which repo the user installed us on
+            installed_repos = list(gi.get_installations()[0].get_repos()) if gi.get_installations() else []
+            if not installed_repos:
+                # Fallback: try listing repos via the installation-authed client
+                installed_repos = list(g.get_user().get_repos())
+            if not installed_repos:
+                raise Exception("GitHub App has no repository access. User must install on at least one repo.")
+            
+            repo = g.get_repo(installed_repos[0].full_name)
+            logger.info("[%s] ✅ Authenticated via GitHub App (Installation %s) → Repo: %s", 
+                        issue.id[:8], installation_id, repo.full_name)
+
         except Exception as exc:
             logger.error("[%s] GitHub client init failed: %s", issue.id[:8], exc)
             await _update(issue, db_path, "fixing_failed", root_cause=str(exc))

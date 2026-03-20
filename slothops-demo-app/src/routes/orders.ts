@@ -35,4 +35,28 @@ router.post("/receipt", (req, res) => {
   res.json({ id: formattedId });
 });
 
+router.post("/:id/refund", (req, res) => {
+  const order = getOrderById(req.params.id as string);
+  if (!order) {
+    return res.status(404).json({ error: "Order not found" });
+  }
+
+  // Simulate calling a payment gateway that returns a response object
+  const gatewayResponse: any = {
+    status: "approved",
+    transaction: null, // Gateway returned null transaction on partial refunds
+  };
+
+  // ✨ BUG 8: NESTED NULL TRAVERSAL ✨
+  // Developer assumes gateway always returns transaction.refundId
+  // Crashes: TypeError: Cannot read properties of null (reading 'refundId')
+  const refundId = gatewayResponse.transaction.refundId;
+
+  res.json({
+    orderId: order.id,
+    refundId: refundId,
+    message: "Refund processed",
+  });
+});
+
 export default router;

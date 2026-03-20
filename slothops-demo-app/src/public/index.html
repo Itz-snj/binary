@@ -89,6 +89,17 @@
                 </button>
             </div>
             
+            <!-- Card 6 -->
+            <div class="bg-surface border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition-all duration-200 group relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-pink-500 to-fuchsia-600 transform -translate-y-1 group-hover:translate-y-0 transition-transform"></div>
+                <h3 class="text-xl font-semibold text-white mb-2">6. Gateway Null Traversal</h3>
+                <p class="text-sm text-gray-400 mb-6 h-10">Reads refundId off a null payment gateway transaction.</p>
+                <button onclick="triggerPost('/orders/101/refund')" class="action-btn w-full bg-surfacehover text-white py-2 px-4 rounded-lg flex items-center justify-between hover:bg-gray-700 transition">
+                    <span>Process Refund</span>
+                    <svg class="w-4 h-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                </button>
+            </div>
+
             <!-- Safe Control -->
             <div class="bg-surface border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition-all duration-200">
                 <h3 class="text-xl font-semibold text-white mb-2">Happy Path (Safe)</h3>

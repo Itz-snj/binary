@@ -42,3 +42,29 @@ async function triggerBug(path) {
         log(`Network failed: ${e.message}`, 'error');
     }
 }
+
+async function triggerPost(path, body = {}) {
+    log(`Sending POST request to ${path}...`);
+    try {
+        const res = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const text = await res.text();
+        
+        if (res.ok) {
+            log(text, 'success');
+        } else {
+            try {
+                const json = JSON.parse(text);
+                log(`HTTP ${res.status}: ${JSON.stringify(json)}`, 'error');
+            } catch (e) {
+                const firstLine = text.split('\n')[0].replace(/<[^>]*>?/gm, '');
+                log(`Server crashed! 💥 Sentry Webhook should fire immediately. [${firstLine.substring(0, 80)}...]`, 'error');
+            }
+        }
+    } catch (e) {
+        log(`Network failed: ${e.message}`, 'error');
+    }
+}

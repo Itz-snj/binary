@@ -28,10 +28,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", None)
-GITHUB_REPO = os.getenv("GITHUB_REPO", "")
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", None)
-GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "").replace("\\n", "\n") if os.getenv("GITHUB_APP_PRIVATE_KEY") else None
+
+# Support both inline PEM and file path
+_pem_raw = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
+if _pem_raw and os.path.isfile(_pem_raw):
+    with open(_pem_raw, "r") as f:
+        GITHUB_APP_PRIVATE_KEY = f.read()
+elif _pem_raw:
+    GITHUB_APP_PRIVATE_KEY = _pem_raw.replace("\\n", "\n")
+else:
+    GITHUB_APP_PRIVATE_KEY = None
 DATABASE_PATH = os.getenv("DATABASE_PATH", "./slothops.db")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
@@ -186,8 +193,6 @@ async def receive_sentry_webhook(workspace_id: str, request: Request):
             issue=issue,
             db_path=DATABASE_PATH,
             gemini_api_key=GEMINI_API_KEY,
-            github_repo=GITHUB_REPO,
-            github_token=GITHUB_TOKEN,
             github_app_id=GITHUB_APP_ID,
             github_app_private_key=GITHUB_APP_PRIVATE_KEY,
         )
@@ -220,15 +225,50 @@ async def link_github_installation(req: GithubLinkRequest, workspace_id: str = D
 @app.post("/webhook/github")
 async def receive_github_webhook(request: Request):
     """
-    Receives background installation sync events from GitHub App.
+    Receives GitHub App installation events.
+    On 'installation' created: store the installation_id.
+    On 'installation' deleted: remove the integration record.
     """
     try:
         payload = await request.json()
     except Exception:
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
-    # Note: Backend webhook handles uninstalls or global tracking.
-    # The actual Workspace pairing is done securely via the frontend /api/github/link redirect.
+    action = payload.get("action")
+    installation = payload.get("installation", {})
+    installation_id = str(installation.get("id", ""))
+
+    if payload.get("installation") and action == "created" and installation_id:
+        # Auto-link: Find the workspace that doesn't have a GitHub integration yet
+        # and link this installation to it. For multi-tenant, the frontend /api/github/link
+        # endpoint is the primary pairing mechanism, but this serves as a backup.
+        workspaces = await db.list_workspaces(DATABASE_PATH)
+        for ws in workspaces:
+            existing_integration = await db.get_integration(ws.id, DATABASE_PATH)
+            if not existing_integration or not existing_integration.github_installation_id:
+                from models import Integration
+                integration = Integration(
+                    workspace_id=ws.id,
+                    github_installation_id=installation_id
+                )
+                await db.upsert_integration(integration, DATABASE_PATH)
+                logger.info("Auto-linked GitHub Installation %s to Workspace %s", installation_id, ws.id)
+                return {"status": "linked", "workspace": ws.id}
+        
+        logger.info("GitHub Installation %s received but no unlinked workspace available. User should link via dashboard.", installation_id)
+    
+    elif payload.get("installation") and action == "deleted" and installation_id:
+        # Remove the integration when the app is uninstalled
+        workspaces = await db.list_workspaces(DATABASE_PATH)
+        for ws in workspaces:
+            integration = await db.get_integration(ws.id, DATABASE_PATH)
+            if integration and integration.github_installation_id == installation_id:
+                from models import Integration
+                cleared = Integration(workspace_id=ws.id, github_installation_id="")
+                await db.upsert_integration(cleared, DATABASE_PATH)
+                logger.info("Unlinked GitHub Installation %s from Workspace %s (app uninstalled)", installation_id, ws.id)
+                break
+
     return {"status": "ok"}
 
 
