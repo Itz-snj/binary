@@ -50,7 +50,7 @@ router.post("/:id/refund", (req, res) => {
   // ✨ BUG 8: NESTED NULL TRAVERSAL ✨
   // Developer assumes gateway always returns transaction.refundId
   // Crashes: TypeError: Cannot read properties of null (reading 'refundId')
-  const refundId = gatewayResponse.transaction.refundId;
+  const refundId = gatewayResponse.transaction?.refundId;
 
   res.json({
     orderId: order.id,
