@@ -128,7 +128,7 @@ Step 7 — code_fetcher.py → fetch_code_context(issue)
 Step 8 — llm_fixer.py → generate_fix(issue, code_context)
   Input:  IssueRecord + dict of file contents
   Output: LLMFixResponse { root_cause, confidence, files_changed, pr_title, pr_body }
-  Calls:  GPT-4o with temp=0.2, response_format=json_object
+  Calls:  Gemini 2.5 Pro with temp=0.2, response_schema=json_object
   Retry:  once on JSON parse failure
 
 Step 9 — pipeline.py (confidence gate, inside run_pipeline)
@@ -325,15 +325,15 @@ Both support FastAPI with a stable URL + persistent disk in one click from GitHu
 
 ## Required API Keys / Accounts
 
-| Service    | What You Need           | Where to Get It              |
-|------------|-------------------------|------------------------------|
-| Gemini     | API key (GenAI access)  | aistudio.google.com          |
-| GitHub     | Personal Access Token   | github.com/settings/tokens   |
-|            | (repo + PR permissions) | Scopes: repo, write:discussion |
-| Sentry     | Free tier account       | sentry.io                    |
-|            | Project DSN             | Project Settings → Client Keys |
-|            | Webhook URL configured  | Settings → Integrations       |
-| ngrok      | Free account            | ngrok.com                    |
+| Service    | What You Need             | Where to Get It               |
+|------------|---------------------------|-------------------------------|
+| Gemini     | API key (GenAI access)    | aistudio.google.com           |
+| GitHub     | GitHub App (App ID + PEM) | github.com/settings/apps/new  |
+|            | (repo + PR permissions)   | Generates Installation tokens |
+| Sentry     | Free tier account         | sentry.io                     |
+|            | Project DSN               | Project Settings → Client Keys|
+|            | Webhook URL configured    | Settings → Integrations       |
+| ngrok      | Free account              | ngrok.com                     |
 
 ---
 
@@ -410,19 +410,18 @@ Here is exactly what happens when a bug is triggered:
 
 ---
 
-## The Three Demo Bugs
+## The Demo Bugs (7 Total)
+
+All bugs compile cleanly via `tsc` but crash at runtime when triggered.
 
 ### Bug 1: Null Reference (src/routes/users.ts)
 ```typescript
-// user.profile can be null for new users
-const response = {
-  name: user.profile.displayName,    // CRASH
-  email: user.profile.contactEmail,  // CRASH
-  avatar: user.profile.avatar.url,   // CRASH
-};
+// user.profile can be null for new users (user "999")
+const name = user.profile!.displayName;    // RUNTIME CRASH
+avatar: user.profile!.avatarUrl            // RUNTIME CRASH
 ```
-**Expected fix:** Optional chaining (`user.profile?.displayName`)
-and/or null check with proper error response.
+**Trigger:** `GET /users/999/profile`
+**Expected fix:** Optional chaining (`user.profile?.displayName`) and/or null check with proper error response.
 
 ### Bug 2: Array on Undefined (src/services/orderService.ts)
 ```typescript
@@ -431,18 +430,52 @@ const subtotal = order.items.reduce(
   (sum, item) => sum + (item.price * item.quantity), 0
 );
 ```
-**Expected fix:** Default to empty array
-(`(order.items ?? []).reduce(...)`) or guard clause.
+**Trigger:** `GET /orders/ORD-999/subtotal`
+**Expected fix:** Default to empty array (`(order.items ?? []).reduce(...)`) or guard clause.
 
 ### Bug 3: Unhandled Auth Error (src/middleware/auth.ts)
 ```typescript
-// req.headers.authorization can be undefined
-// jwt.verify throws on invalid/expired tokens
-const token = req.headers.authorization.split(' ')[1];
-const decoded = jwt.verify(token, process.env.JWT_SECRET);
+// jwt.verify throws synchronously on invalid tokens — no try/catch!
+const payload = jwt.verify(token, JWT_SECRET);
 ```
-**Expected fix:** Check for header existence, wrap jwt.verify
-in try/catch with proper 401 response.
+**Trigger:** `GET /orders/ORD-001` with header `Authorization: Bearer garbage`
+**Expected fix:** Wrap jwt.verify in try/catch with proper 401 response.
+
+### Bug 4: Floating Async Promise (src/routes/sync.ts)
+```typescript
+// async inside forEach() — promises fire and forget, errors are unhandled
+productIds.forEach(async (id) => {
+    const data = await fetchInventory(id);
+    if (id === "p_3") throw new Error(`Sync failed for ${id}`);
+});
+```
+**Trigger:** `GET /sync/batch`
+**Expected fix:** Replace `forEach` with `Promise.all(productIds.map(async ...))` and `await` it.
+
+### Bug 5: Cache Poisoning / Shared Object Mutation (src/routes/config.ts)
+```typescript
+// Mutates global singleton AppConfig — poisons ALL future requests!
+if (forceDark) {
+    currentConfig.theme = forceDark; // MUTATING GLOBAL STATE!
+}
+```
+**Trigger:** `GET /config/theme?forceDark=bad_string` then `GET /config/theme`
+**Expected fix:** Use a local variable instead of mutating the shared config.
+
+### Bug 6: Null Feature Config (src/routes/users.ts)
+```typescript
+const userConfig: any = { features: null };
+if (userConfig.features.enabled) { ... } // CRASH: null.enabled
+```
+**Trigger:** `GET /users/1/premium`
+**Expected fix:** Optional chaining or null check on `features`.
+
+### Bug 7: Undefined Receipt ID (src/routes/orders.ts)
+```typescript
+const formattedId = payload.receiptId.toUpperCase(); // CRASH if receiptId missing
+```
+**Trigger:** `POST /orders/receipt` with empty body `{}`
+**Expected fix:** Guard for `payload.receiptId` existence before calling `.toUpperCase()`.
 
 ---
 
@@ -456,8 +489,7 @@ in try/catch with proper 401 response.
 - Canary deployment verification
 - Vector embeddings / semantic code search
 - Slack/Discord notifications
-- User authentication on the dashboard
-- Multi-repo support
+- Multi-repo support (single repo per workspace for now)
 - Custom rule configuration UI
 - Historical analytics / charts
 

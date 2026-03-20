@@ -64,9 +64,9 @@ reviewable code fixes automatically.
    - Do NOT use embeddings or vector search (out of scope for MVP)
 
 7. LLM FIX GENERATION
-   - Model: OpenAI GPT-4o
+   - Model: Google Gemini 2.5 Pro (via google-genai SDK)
    - Temperature: 0.2 (deterministic)
-   - Response format: JSON (enforced via response_format)
+   - Response format: JSON (enforced via response_schema)
    - System prompt enforces strict rules (see RULES section below)
    - Output includes:
      - root_cause (string)
@@ -115,7 +115,7 @@ Use this as the ground truth when asking an LLM to work on a specific module.
 | 6. Persist issue | `database.py` | `create_issue(issue)` / `update_issue_status(...)` | Writes or updates the issue record in SQLite via aiosqlite |
 | 7. Classify | `classifier.py` | `classify(issue)` | Returns `code`, `infra`, `dependency`, or `unknown`. Only `code` proceeds to fix generation |
 | 8. Fetch source | `code_fetcher.py` | `fetch_code_context(issue)` | Uses PyGithub to download: main failing file + test file + up to 3 local imports |
-| 9. Generate fix | `llm_fixer.py` | `generate_fix(issue, code_context)` | Builds system + user prompt, calls Gemini (temp=0.2, JSON mode), parses `LLMFixResponse` |
+| 9. Generate fix | `llm_fixer.py` | `generate_fix(issue, code_context)` / `generate_infra_recommendation(issue)` | Builds system + user prompt, calls Gemini 2.5 Pro (temp=0.2, JSON mode), parses `LLMFixResponse`. For infra issues, generates DevOps recommendations instead of code fixes |
 | 10. Confidence gate | `pipeline.py` | inside `run_pipeline()` | Checks `fix.confidence`: high/medium → create PR, low → store recommendation only |
 | 11. Create PR | `github_automation.py` | `create_fix_pr(issue, fix)` | Creates branch, commits each changed file, opens Draft PR on GitHub via PyGithub |
 | 12. Broadcast | `sse_manager.py` | `broadcast(event_type, payload)` | Emits SSE events at each stage so the dashboard updates in real-time |
@@ -129,7 +129,7 @@ Same fingerprint fires AFTER PR was merged
   → fingerprint.py: check_dedup() returns RETRIGGER
   → database.py: mark status = "fix_ineffective", set previous_fix_id
   → pipeline.py: re-runs full pipeline
-  → llm_fixer.py: injects previous_pr_url into user prompt so LLM knows prior fix failed
+  → llm_fixer.py: injects previous_pr_url into user prompt so Gemini knows prior fix failed
   → github_automation.py: opens a new Draft PR referencing the old one
 ```
 
@@ -145,11 +145,13 @@ The full JSON shape is documented in the **INTERNAL DATA CONTRACT** section belo
 |--------------------|-------------------------|
 | Bot Server         | Python 3.11 + FastAPI   |
 | Target Demo App    | Node.js + Express + TypeScript |
-| LLM                | Google Gemini API       |
+| LLM                | Google Gemini 2.5 Pro   |
 | Monitoring         | Sentry (free tier)      |
 | Git Automation     | PyGithub                |
-| Database           | SQLite (single file)    |
-| Dashboard          | Static HTML + TailwindCSS + SSE |
+| Database           | SQLite (aiosqlite, multi-tenant) |
+| Dashboard          | Static HTML + Custom CSS + SSE |
+| Authentication     | bcrypt + PyJWT (Bearer tokens) |
+| GitHub Integration | GitHub App (@slothops-bot) |
 | CI Validation      | GitHub Actions in target repo |
 | Tunnel (dev)       | ngrok                   |
 
@@ -159,42 +161,47 @@ The full JSON shape is documented in the **INTERNAL DATA CONTRACT** section belo
 
 ```
 slothops-engine/
-├── main.py                  # FastAPI app entry point
+├── main.py                  # FastAPI app entry point + auth routes
+├── auth.py                  # bcrypt password hashing + PyJWT token management
 ├── config.py                # Environment variables and settings
-├── models.py                # Pydantic models and SQLite schema
-├── database.py              # SQLite connection and queries
+├── models.py                # Pydantic models (IssueRecord, User, Workspace, Integration)
+├── database.py              # SQLite connection and multi-tenant queries
 ├── pipeline.py              # Main orchestration: run_pipeline()
 ├── sentry_parser.py         # Parse Sentry webhook payloads
 ├── classifier.py            # Code vs infra classification
 ├── redactor.py              # PII and secret redaction
 ├── code_fetcher.py          # GitHub code context retrieval
-├── llm_fixer.py             # OpenAI prompt construction and calling
-├── github_automation.py     # Branch, commit, PR creation
+├── llm_fixer.py             # Gemini prompt construction, fix gen + infra recommendations
+├── github_automation.py     # Branch, commit, PR creation via GitHub App tokens
 ├── fingerprint.py           # Issue fingerprinting and dedup logic
 ├── sse_manager.py           # Server-Sent Events for dashboard
 ├── static/
-│   └── index.html           # Dashboard UI
+│   ├── index.html           # Dashboard UI (auth gate + issue feed + settings modal)
+│   └── style.css            # Custom CSS design system
 ├── tests/
 │   ├── test_classifier.py
 │   ├── test_redactor.py
 │   ├── test_fingerprint.py
 │   └── test_sentry_parser.py
 ├── requirements.txt
-├── .env.example
-├── AI_CONTEXT.md            # This file
-└── DEVELOPER_CONTEXT.md     # Human developer onboarding
+└── .env.example
 
 slothops-demo-app/
 ├── src/
 │   ├── index.ts             # Express app with Sentry init
 │   ├── routes/
-│   │   ├── users.ts         # Bug 1: null reference
-│   │   └── orders.ts        # Bug 2: array on undefined
+│   │   ├── users.ts         # Bug 1: null profile reference, Bug 6: null feature config
+│   │   ├── orders.ts        # Bug 2: array on undefined, Bug 7: undefined receiptId
+│   │   ├── sync.ts          # Bug 4: floating async promise in forEach
+│   │   └── config.ts        # Bug 5: global singleton cache poisoning
 │   ├── middleware/
-│   │   └── auth.ts          # Bug 3: unhandled jwt error
-│   └── services/
-│       ├── userService.ts
-│       └── orderService.ts
+│   │   └── auth.ts          # Bug 3: unhandled jwt.verify crash
+│   ├── services/
+│   │   ├── userService.ts
+│   │   └── orderService.ts
+│   └── public/
+│       ├── index.html       # Demo app frontend
+│       └── style.css
 ├── tests/
 │   ├── users.test.ts
 │   └── orders.test.ts
@@ -203,7 +210,7 @@ slothops-demo-app/
 │       └── validate.yml     # CI: lint + typecheck + test
 ├── package.json
 ├── tsconfig.json
-└── .sentryclirc
+└── vercel.json
 ```
 
 ---
@@ -470,28 +477,36 @@ Replace each match with: [REDACTED_{PATTERN_NAME}]
 
 ## API ENDPOINTS
 
-| Method | Path              | Description                        |
-|--------|-------------------|------------------------------------|
-| POST   | /webhook/sentry   | Receives Sentry webhook alerts     |
-| GET    | /issues           | List all tracked issues            |
-| GET    | /issues/{id}      | Get single issue detail            |
-| GET    | /stream           | SSE stream for dashboard updates   |
-| GET    | /health           | Health check                       |
-| GET    | /                 | Serve dashboard HTML               |
+| Method | Path                          | Auth?   | Description                                 |
+|--------|-------------------------------|---------|---------------------------------------------|
+| POST   | /webhook/sentry/{workspace_id}| No      | Receives Sentry webhook alerts (per-tenant) |
+| POST   | /webhook/github               | No      | Receives GitHub App installation events     |
+| POST   | /api/signup                   | No      | Create workspace + user account             |
+| POST   | /api/login                    | No      | Authenticate and receive JWT                |
+| POST   | /api/github/link              | Bearer  | Link GitHub App installation to workspace   |
+| GET    | /issues                       | Bearer  | List workspace-scoped tracked issues        |
+| GET    | /issues/{id}                  | Bearer  | Get single issue detail                     |
+| GET    | /stream                       | Token   | SSE stream for dashboard (token via query)  |
+| GET    | /health                       | No      | Health check                                |
+| GET    | /                             | No      | Serve dashboard HTML                        |
 
 ---
 
 ## ENVIRONMENT VARIABLES
 
 ```
-GEMINI_API_KEY=AIza...
-GITHUB_TOKEN=ghp_...
-GITHUB_REPO=org/slothops-demo-app
-SENTRY_WEBHOOK_SECRET=whsec_...  (optional, for signature verification)
+GEMINI_API_KEY=AIza...              # Google AI Studio API key
+GITHUB_APP_ID=123456                # GitHub App numeric ID
+GITHUB_APP_PRIVATE_KEY=-----BEGIN...# GitHub App .pem private key (inline or file path)
+JWT_SECRET=your-secret-key-here     # HMAC key for PyJWT (min 32 bytes recommended)
+SENTRY_WEBHOOK_SECRET=whsec_...     # (optional) for signature verification
 DATABASE_PATH=./slothops.db
 PORT=8000
 LOG_LEVEL=INFO
 ```
+
+> **DEPRECATED:** `GITHUB_TOKEN` and `GITHUB_REPO` are no longer used.
+> Repository access is handled dynamically via the GitHub App installation tokens.
 
 ---
 
@@ -528,6 +543,8 @@ For this MVP, SlothOps handles TypeScript/JavaScript:
 - Unhandled promise rejections
 - Missing null/undefined guards on API response data
 - Array method calls on non-array values
+- Shared state / cache poisoning mutations
+- Missing try/catch around throwing synchronous calls
 
 It does NOT handle:
 - Logic bugs with no runtime error
@@ -536,7 +553,7 @@ It does NOT handle:
 - Race conditions
 - CSS/UI bugs
 - Build/compilation errors
-- Infrastructure failures (these are classified and skipped)
+- Infrastructure failures (these are classified and logged with DevOps recommendations)
 
 ---
 
@@ -560,18 +577,33 @@ The demo app should have:
 ## DEMO SCENARIOS
 
 Scenario 1 — NULL REFERENCE (happy path):
-  Trigger: GET /users/999/profile (user with no profile)
+  Trigger: GET /users/999/profile (user with null profile)
   Expected: TypeError captured → classified as code →
             fix generated → draft PR opened
 
-Scenario 2 — INFRA ERROR (classification demo):
-  Trigger: Kill the database, then hit any endpoint
-  Expected: ECONNREFUSED captured → classified as infra →
-            no PR created, issue logged as "ignored"
+Scenario 2 — ARRAY ON UNDEFINED:
+  Trigger: GET /orders/ORD-999/subtotal (order with no items array)
+  Expected: TypeError → code → fix with default empty array
 
-Scenario 3 — RECURRENCE (closed-loop demo):
-  Trigger: Merge the PR from Scenario 1, then introduce
-           a variation of the same bug
+Scenario 3 — UNHANDLED JWT CRASH:
+  Trigger: GET /orders/ORD-001 with header `Authorization: Bearer garbage`
+  Expected: JsonWebTokenError → code → fix wraps jwt.verify in try/catch
+
+Scenario 4 — FLOATING ASYNC PROMISE:
+  Trigger: GET /sync/batch
+  Expected: Unhandled rejection → code → fix replaces forEach with Promise.all
+
+Scenario 5 — CACHE POISONING / SHARED MUTATION:
+  Trigger: GET /config/theme?forceDark=bad_string then GET /config/theme
+  Expected: TypeError on second request → code → fix uses local variable
+
+Scenario 6 — INFRA ERROR (classification demo):
+  Trigger: Kill the database, then hit any endpoint
+  Expected: ECONNREFUSED → classified as infra →
+            no PR created, DevOps recommendation logged
+
+Scenario 7 — RECURRENCE (closed-loop demo):
+  Trigger: Merge a PR from above, then re-trigger the same bug
   Expected: Same fingerprint detected → previous fix marked
             ineffective → new PR with deeper analysis
 

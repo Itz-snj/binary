@@ -27,4 +27,12 @@ router.get("/:id/subtotal", (req, res) => {
   }
 });
 
+router.post("/receipt", (req, res) => {
+  const payload = req.body;
+  // ✨ BUG: SaaS DEMO VULNERABILITY ✨
+  // Throws TypeError: Cannot read properties of undefined (reading 'toUpperCase')
+  const formattedId = payload.receiptId.toUpperCase();
+  res.json({ id: formattedId });
+});
+
 export default router;

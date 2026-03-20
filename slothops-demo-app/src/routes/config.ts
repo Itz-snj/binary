@@ -25,14 +25,13 @@ configRouter.get("/theme", (req, res) => {
     // Instead, they mutated the global AppConfig. Every request after this will crash
     // if forceDark passed is something stupid, because it poisons the cache.
     if (forceDark) {
-        // TypeScript bypass: forced mutation via 'any' matching the user's specific instruction to bypass 'tsc'
-        (currentConfig.theme as any) = forceDark;
+        currentConfig.theme = forceDark; // MUTATING GLOBAL STATE!
     }
 
     // Now we use a strict method that expects EXACTLY 'light' or 'dark'
-    // If currentConfig.theme was poisoned with 'bad_string', this throws.
+    // If the provided theme was a 'bad_string', this throws for ALL FUTURE requests.
     if (currentConfig.theme !== "light" && currentConfig.theme !== "dark") {
-        throw new TypeError(`Invalid theme setting detected in application cache: ${currentConfig.theme}. Expected 'light' or 'dark'.`);
+        throw new TypeError(`Invalid theme setting provided: ${currentConfig.theme}. Expected 'light' or 'dark'.`);
     }
 
     res.json({

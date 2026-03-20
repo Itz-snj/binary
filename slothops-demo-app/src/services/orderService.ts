@@ -38,10 +38,8 @@ export function getOrderSubtotal(orderId: string): number {
   const order = getOrderById(orderId);
   if (!order) throw new Error("Order not found");
 
-  // ✨ BUG 2 ✨
-  // We assume order.items is an array, but it can be undefined.
-  // This will throw: TypeError: Cannot read properties of undefined (reading 'reduce')
-  const total = order.items!.reduce((acc, item) => {
+  // order.items can be undefined for new orders. Default to an empty array to calculate subtotal.
+  const total = (order.items || []).reduce((acc, item) => {
     return acc + (item.price * item.quantity);
   }, 0);
 
