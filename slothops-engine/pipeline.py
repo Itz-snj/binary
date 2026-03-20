@@ -63,12 +63,12 @@ async def run_pipeline(
         fp = compute_fingerprint(issue.error_type, issue.file_path, issue.function_name, issue.error_message)
         issue.fingerprint = fp
 
-        existing = await db.get_issue_by_fingerprint(fp, db_path)
+        existing = await db.get_issue_by_fingerprint(fp, issue.workspace_id, db_path)
 
         if existing:
             action = check_dedup(existing.status, existing.updated_at)
             if action == DedupeAction.SKIP:
-                await db.increment_occurrence(existing.id, db_path)
+                await db.increment_occurrence(existing.id, issue.workspace_id, db_path)
                 await broadcast("status_update", {
                     "id": existing.id,
                     "status": existing.status,

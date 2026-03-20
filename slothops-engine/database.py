@@ -22,6 +22,7 @@ _DEFAULT_DB = "./slothops.db"
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS issues (
     id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'default_workspace',
     fingerprint TEXT NOT NULL,
     error_type TEXT,
     error_message TEXT,
@@ -41,6 +42,40 @@ CREATE TABLE IF NOT EXISTS issues (
     previous_fix_id TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+_CREATE_WORKSPACES = """
+CREATE TABLE IF NOT EXISTS workspaces (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+_CREATE_USERS = """
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    hashed_password TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+_CREATE_WORKSPACE_USERS = """
+CREATE TABLE IF NOT EXISTS workspace_users (
+    workspace_id TEXT,
+    user_id TEXT,
+    role TEXT DEFAULT 'admin',
+    PRIMARY KEY (workspace_id, user_id)
+);
+"""
+
+_CREATE_INTEGRATIONS = """
+CREATE TABLE IF NOT EXISTS integrations (
+    workspace_id TEXT PRIMARY KEY,
+    github_installation_id TEXT,
+    sentry_webhook_secret TEXT
 );
 """
 
@@ -72,6 +107,10 @@ async def init_db(db_path: str = _DEFAULT_DB) -> None:
     """Create the issues table and indexes if they don't exist."""
     async with aiosqlite.connect(db_path) as db:
         await db.execute(_CREATE_TABLE)
+        await db.execute(_CREATE_WORKSPACES)
+        await db.execute(_CREATE_USERS)
+        await db.execute(_CREATE_WORKSPACE_USERS)
+        await db.execute(_CREATE_INTEGRATIONS)
         for idx_sql in _CREATE_INDEXES:
             await db.execute(idx_sql)
         await db.commit()
@@ -116,22 +155,22 @@ async def create_issue(issue: IssueRecord, db_path: str = _DEFAULT_DB) -> None:
         await db.commit()
 
 
-async def get_issue(issue_id: str, db_path: str = _DEFAULT_DB) -> Optional[IssueRecord]:
-    """Fetch a single issue by its ID."""
+async def get_issue(issue_id: str, workspace_id: str, db_path: str = _DEFAULT_DB) -> Optional[IssueRecord]:
+    """Fetch a single issue by its ID, scoped to a workspace."""
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM issues WHERE id = ?", (issue_id,)) as cursor:
+        async with db.execute("SELECT * FROM issues WHERE id = ? AND workspace_id = ?", (issue_id, workspace_id)) as cursor:
             row = await cursor.fetchone()
             return _row_to_issue(row) if row else None
 
 
-async def get_issue_by_fingerprint(fingerprint: str, db_path: str = _DEFAULT_DB) -> Optional[IssueRecord]:
-    """Fetch the most recent issue with a given fingerprint."""
+async def get_issue_by_fingerprint(fingerprint: str, workspace_id: str, db_path: str = _DEFAULT_DB) -> Optional[IssueRecord]:
+    """Fetch the most recent issue with a given fingerprint for a workspace."""
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT * FROM issues WHERE fingerprint = ? ORDER BY created_at DESC LIMIT 1",
-            (fingerprint,),
+            "SELECT * FROM issues WHERE fingerprint = ? AND workspace_id = ? ORDER BY created_at DESC LIMIT 1",
+            (fingerprint, workspace_id),
         ) as cursor:
             row = await cursor.fetchone()
             return _row_to_issue(row) if row else None
@@ -157,21 +196,74 @@ async def update_issue_status(
 
 
 async def increment_occurrence(
-    issue_id: str, db_path: str = _DEFAULT_DB
+    issue_id: str, workspace_id: str, db_path: str = _DEFAULT_DB
 ) -> None:
     """Bump occurrence_count by 1."""
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
-            "UPDATE issues SET occurrence_count = occurrence_count + 1, updated_at = ? WHERE id = ?",
-            (datetime.utcnow().isoformat(), issue_id),
+            "UPDATE issues SET occurrence_count = occurrence_count + 1, updated_at = ? WHERE id = ? AND workspace_id = ?",
+            (datetime.utcnow().isoformat(), issue_id, workspace_id),
         )
         await db.commit()
 
 
-async def list_issues(db_path: str = _DEFAULT_DB) -> list[IssueRecord]:
-    """Return all issues ordered by most recent first."""
+async def create_user(user, db_path: str = _DEFAULT_DB) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT INTO users (id, email, hashed_password, created_at) VALUES (?, ?, ?, ?)",
+            (user.id, user.email, user.hashed_password, user.created_at.isoformat())
+        )
+        await db.commit()
+
+async def get_user_by_email(email: str, db_path: str = _DEFAULT_DB):
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM issues ORDER BY created_at DESC") as cursor:
+        async with db.execute("SELECT * FROM users WHERE email = ?", (email,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                from models import User
+                d = dict(row)
+                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
+                return User(**d)
+            return None
+
+async def create_workspace(workspace, db_path: str = _DEFAULT_DB) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)",
+            (workspace.id, workspace.name, workspace.created_at.isoformat())
+        )
+        await db.commit()
+
+async def add_user_to_workspace(workspace_id: str, user_id: str, role: str = "admin", db_path: str = _DEFAULT_DB) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES (?, ?, ?)",
+            (workspace_id, user_id, role)
+        )
+        await db.commit()
+
+async def get_user_workspaces(user_id: str, db_path: str = _DEFAULT_DB):
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT w.* FROM workspaces w JOIN workspace_users wu ON w.id = wu.workspace_id WHERE wu.user_id = ?",
+            (user_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            res = []
+            from models import Workspace
+            for row in rows:
+                d = dict(row)
+                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
+                res.append(Workspace(**d))
+            return res
+
+
+async def list_issues(workspace_id: str, db_path: str = _DEFAULT_DB) -> list[IssueRecord]:
+    """Return all issues for a specific workspace ordered by most recent first."""
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM issues WHERE workspace_id = ? ORDER BY created_at DESC", (workspace_id,)) as cursor:
             rows = await cursor.fetchall()
             return [_row_to_issue(row) for row in rows]

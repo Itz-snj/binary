@@ -53,6 +53,7 @@ class IssueRecord(BaseModel):
     """The single data object that flows through the entire pipeline."""
 
     id: str
+    workspace_id: str = "default_workspace"
     fingerprint: str = ""
     error_type: Optional[str] = None
     error_message: Optional[str] = None
@@ -72,6 +73,30 @@ class IssueRecord(BaseModel):
     previous_fix_id: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ── SaaS Multi-Tenant Models ──────────────────────────────────────────────────
+
+class User(BaseModel):
+    id: str
+    email: str
+    hashed_password: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class Workspace(BaseModel):
+    id: str
+    name: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class WorkspaceUser(BaseModel):
+    workspace_id: str
+    user_id: str
+    role: str = "admin"
+
+class Integration(BaseModel):
+    workspace_id: str
+    github_installation_id: Optional[str] = None
+    sentry_webhook_secret: Optional[str] = None
 
 
 # ── LLM Response Models ─────────────────────────────────────────────────

@@ -67,9 +67,9 @@
           "raw": "{\n  \"data\": {\n    \"event\": {\n      \"exception\": {\n        \"values\": [\n          {\n            \"type\": \"TypeError\",\n            \"value\": \"Simulated Postman Crash\",\n            \"stacktrace\": {\n              \"frames\": [\n                {\n                  \"filename\": \"src/routes/config.ts\",\n                  \"lineno\": 42,\n                  \"function\": \"manualTrigger\"\n                }\n              ]\n            }\n          }\n        ]\n      }\n    }\n  }\n}"
         },
         "url": {
-          "raw": "{{base_url}}/webhook/sentry",
+          "raw": "{{base_url}}/webhook/sentry/default_workspace",
           "host": ["{{base_url}}"],
-          "path": ["webhook", "sentry"]
+          "path": ["webhook", "sentry", "default_workspace"]
         }
       }
     }
