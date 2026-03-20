@@ -211,8 +211,35 @@ slothops-demo-app/
 ## DATABASE SCHEMA
 
 ```sql
+CREATE TABLE workspaces (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    hashed_password TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE workspace_users (
+    workspace_id TEXT,
+    user_id TEXT,
+    role TEXT DEFAULT 'admin',
+    PRIMARY KEY (workspace_id, user_id)
+);
+
+CREATE TABLE integrations (
+    workspace_id TEXT PRIMARY KEY,
+    github_installation_id TEXT,
+    sentry_webhook_secret TEXT
+);
+
 CREATE TABLE issues (
     id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'default_workspace',
     fingerprint TEXT NOT NULL,
     error_type TEXT,
     error_message TEXT,
@@ -223,19 +250,13 @@ CREATE TABLE issues (
     raw_payload TEXT,
     occurrence_count INTEGER DEFAULT 1,
     classification TEXT DEFAULT 'unknown',
-    -- classification values: code | infra | dependency | unknown
     confidence TEXT,
-    -- confidence values: high | medium | low | null
     status TEXT DEFAULT 'received',
-    -- status values: received | triaging | classified |
-    --   fixing | pr_created | pr_merged | fix_ineffective |
-    --   ignored | recommendation_only
     fix_pr_url TEXT,
     fix_pr_branch TEXT,
     root_cause TEXT,
     recommendation TEXT,
     previous_fix_id TEXT,
-    -- references id of a prior fix attempt if this is a recurrence
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -556,15 +577,20 @@ Scenario 3 — RECURRENCE (closed-loop demo):
 
 ---
 
-## PHASE 5: SAAS MULTI-TENANT INCUBATION
+## PHASE 5: SAAS MULTI-TENANT INCUBATION (IN PROGRESS)
 
-This phase upgrades the codebase to a multi-tenant platform, replacing hardcoded personal credentials with scalable, authenticated integrations:
+This phase upgrades the codebase to a multi-tenant platform.
 
-1. **Authentication:** User login for the dashboard (Supabase Auth / Clerk / NextAuth).
-2. **Proper DB Setup:** Migration from local `sqlite` to a hosted database (PostgreSQL via Supabase/Neon) using `workspace_id` to isolate bugs per tenant.
-3. **GitHub App Setup:** Replacing `GITHUB_TOKEN` PAT with a fully-fledged GitHub App (`@slothops-bot`). The engine will dynamically exchange the App ID and Private Key for short-lived Installation Tokens specific to individual user repositories.
-4. **Sentry Connect OAuth:** An OAuth flow allowing users to connect their Sentry accounts securely.
-5. **Live Verification:** Deploying `slothops-demo-app` strictly to Vercel, feeding Sentry events out to the internet, intercepted by `ngrok` running parallel to the SlothOps engine. 
+### ✅ Completed:
+1. **Authentication:** Pure Python `bcrypt` + `PyJWT` implementation. Native frontend login/signup flows serving as an authenticated dashboard.
+2. **Proper DB Setup:** Multi-tenant SQLite schemas established (`workspaces`, `users`, `integrations`). All issues are strictly scoped mathematically by `workspace_id`.
+3. **GitHub App Setup:** The `@slothops-bot` logic is fully integrated via `POST /webhook/github`. The `GITHUB_REPO` environment variable was ripped out. The engine dynamically queries PyGithub `installation.get_repos()` to dynamically target user repositories!
+
+### ⏳ Upcoming Tasks (Tomorrow's Session):
+1. **Developer Setup:** User physically generates the `.pem` Private Key from github.com and configures the GitHub App webhook URL.
+2. **End-to-End Simulation:** Fire an error from the frontend, verify Sentry creates the `/webhook/sentry/{workspace_id}` payload, verify the App Token dynamically clones the correct repo, and opens the PR.
+3. **Migrate to PostgreSQL:** Swap `aiosqlite` for `asyncpg` (Supabase/Neon) for live production database persistence.
+4. **Live Verification:** Deploying `slothops-demo-app` strictly to Vercel, feeding Sentry events out to the internet, intercepted by `ngrok` running parallel to the SlothOps engine. 
 
 ---
 ## END OF AI CONTEXT

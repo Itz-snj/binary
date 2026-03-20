@@ -611,13 +611,20 @@ Backup plan if a critical component fails:
 
 ---
 
-## PHASE 5: SAAS UPGRADE (TOMORROW)
+## PHASE 5: SAAS UPGRADE (IN PROGRESS)
 
-The next steps for the team involve transitioning from Local Hackathon MVP to a SaaS Platform:
-1. **GitHub App:** Register the `@slothops-bot` GitHub app. Users install this on their repos instead of handing over raw `GITHUB_TOKEN` PATs. The engine dynamically provisions installation access tokens for fetches and PR creation.
-2. **Postgres DB:** Dump SQLite. Spin up Supabase or Neon.
-3. **User Authentication:** Allow users to log in to dashboard to view their specific issues.
-4. **Vercel Demo Deploy:** Deploy the Node.js demo app to Vercel, attach a real Sentry DSN, and prove that real users hitting the live Vercel URL generates webhooks caught by the `ngrok` running on the devs machine.
+The team has transitioned from Local Hackathon MVP to a SaaS Platform!
+
+### ✅ What We've Built So Far:
+1. **Auth + UI Dashboard:** Built an integrated Signup/Login Flow natively inside `static/index.html`. Users can boot up unique "Workspaces", and the dashboard strictly scopes issue visibility via `PyJWT` Bearer tokens.
+2. **Multi-Tenant DB Architecture:** Upgraded SQLite to separate `workspaces`, `users`, and `workspace_users` tables. Sentry webhook URLs are uniquely formulated for every tenant (`/webhook/sentry/{workspace_id}`).
+3. **Decoupled GitHub Repository Targeting:** The hardcoded `GITHUB_REPO` environment variable is DEPRECATED. SlothOps intercepts GitHub App Installations on `POST /webhook/github` and saves the `installation_id`. During a pipeline run, it uses `PyGithub` to dynamically query `installation.get_repos()` and infer the exact target repository automatically!
+
+### ⏳ Tomorrow's Development Goals:
+1. **Live GitHub App Installation:** The developer must configure the App Webhook on GitHub, generate the `.pem` Private Key, add it to `.env`, and click "Install" on their target repository.
+2. **Sentry Redirection:** Copy the custom Workspace Webhook URL from the new SlothOps Dashboard and paste it into the Sentry project settings.
+3. **The End-to-End Run:** Trigger a real bug on the frontend. Ensure the Sentry Payload routes securely to the correct Workspace, generates a short-lived GitHub App Token, fetches the dynamic repository, fixes the code, and creates the PR successfully!
+4. **Postgres Migration:** Dump SQLite for a production `asyncpg` PostgreSQL database (like Neon or Supabase).
 
 ---
 ## END OF DEVELOPER CONTEXT

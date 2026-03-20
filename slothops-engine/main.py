@@ -86,38 +86,50 @@ class SignupRequest(BaseModel):
 
 @app.post("/api/signup")
 async def signup(req: SignupRequest):
-    existing = await db.get_user_by_email(req.email)
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    
-    user_id = str(uuid.uuid4())
-    hashed = auth.get_password_hash(req.password)
-    user = User(id=user_id, email=req.email, hashed_password=hashed)
-    await db.create_user(user)
-    
-    workspace_id = str(uuid.uuid4())
-    workspace = Workspace(id=workspace_id, name=req.workspace_name)
-    await db.create_workspace(workspace)
-    await db.add_user_to_workspace(workspace_id, user_id, role="admin")
-    
-    access_token = auth.create_access_token(
-        data={"sub": user.email, "workspace_id": workspace_id}
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
+    try:
+        existing = await db.get_user_by_email(req.email)
+        if existing:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        user_id = str(uuid.uuid4())
+        hashed = auth.get_password_hash(req.password)
+        user = User(id=user_id, email=req.email, hashed_password=hashed)
+        await db.create_user(user)
+        
+        workspace_id = str(uuid.uuid4())
+        workspace = Workspace(id=workspace_id, name=req.workspace_name)
+        await db.create_workspace(workspace)
+        await db.add_user_to_workspace(workspace_id, user_id, role="admin")
+        
+        access_token = auth.create_access_token(
+            data={"sub": user.email, "workspace_id": workspace_id}
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+    except Exception as e:
+        import traceback
+        logger.error("Signup 500: %s %s", str(e), traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Engine Error: {str(e)}")
 
 @app.post("/api/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = await db.get_user_by_email(form_data.username)
-    if not user or not auth.verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Incorrect email or password")
-    
-    workspaces = await db.get_user_workspaces(user.id)
-    workspace_id = workspaces[0].id if workspaces else "default_workspace"
-    
-    access_token = auth.create_access_token(
-        data={"sub": user.email, "workspace_id": workspace_id}
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
+    try:
+        user = await db.get_user_by_email(form_data.username)
+        if not user or not auth.verify_password(form_data.password, user.hashed_password):
+            raise HTTPException(status_code=400, detail="Incorrect email or password")
+        
+        workspaces = await db.get_user_workspaces(user.id)
+        workspace_id = workspaces[0].id if workspaces else "default_workspace"
+        
+        access_token = auth.create_access_token(
+            data={"sub": user.email, "workspace_id": workspace_id}
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error("Login 500: %s %s", str(e), traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Engine Error: {str(e)}")
 
 
 # ── Routes ───────────────────────────────────────────────────────────────
@@ -183,30 +195,40 @@ async def receive_sentry_webhook(workspace_id: str, request: Request):
 
     return JSONResponse({"status": "accepted", "issue_id": issue.id})
 
+from pydantic import BaseModel
+
+class GithubLinkRequest(BaseModel):
+    installation_id: str
+
+@app.post("/api/github/link")
+async def link_github_installation(req: GithubLinkRequest, workspace_id: str = Depends(get_current_workspace)):
+    """
+    Called securely by the Frontend Dashboard immediately after the user installs 
+    the GitHub App and is redirected back to the Setup URL.
+    Pairs the App Installation mathematically to their verified JWT workspace_id.
+    """
+    from models import Integration
+    # Upsert the integration row
+    integration = Integration(
+        workspace_id=workspace_id,
+        github_installation_id=req.installation_id
+    )
+    await db.upsert_integration(integration, DATABASE_PATH)
+    logger.info("Successfully bound GitHub Installation %s to Workspace %s via Dashboard OAuth redirect!", req.installation_id, workspace_id)
+    return {"status": "linked", "workspace": workspace_id}
+
 @app.post("/webhook/github")
 async def receive_github_webhook(request: Request):
     """
-    Receives GitHub App install/uninstall Background Webhooks.
+    Receives background installation sync events from GitHub App.
     """
     try:
         payload = await request.json()
     except Exception:
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
-    action = payload.get("action")
-    if action == "created" and "installation" in payload:
-        installation_id = str(payload["installation"]["id"])
-        
-        # When moving fully to SaaS, the Setup Action URL tracks `workspace_id` via a state integer.
-        # For the engine, we automatically bind new app installs to the `default_workspace`.
-        from models import Integration
-        integration = Integration(
-            workspace_id="default_workspace", 
-            github_installation_id=installation_id
-        )
-        await db.upsert_integration(integration, DATABASE_PATH)
-        logger.info(f"GitHub App explicitly granted permissions! Bootstrapped Installation ID {installation_id} into Integrations table natively.")
-
+    # Note: Backend webhook handles uninstalls or global tracking.
+    # The actual Workspace pairing is done securely via the frontend /api/github/link redirect.
     return {"status": "ok"}
 
 

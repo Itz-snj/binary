@@ -129,22 +129,31 @@ async def run_pipeline(
             from github import Github, Auth
             integration = await db.get_integration(issue.workspace_id, db_path)
             
-            # Prefer GitHub App Installation
             if integration and integration.github_installation_id and github_app_id and github_app_private_key:
                 auth = Auth.AppAuth(github_app_id, github_app_private_key)
                 gi = Github(auth=auth)
-                g = gi.get_app().get_installation(int(integration.github_installation_id)).get_github_for_installation()
-                logger.info("[%s] Authenticated dynamically via GitHub App Installation ID", issue.id[:8])
+                installation = gi.get_app().get_installation(int(integration.github_installation_id))
+                g = installation.get_github_for_installation()
+                
+                # Architecturally correct SaaS flow: Zero configuration. 
+                # We dynamically ask GitHub's API which repository the user installed us on!
+                installed_repos = [r for r in installation.get_repos()]
+                if not installed_repos:
+                    raise Exception("User has not granted this GitHub App access to any repositories.")
+                
+                # Fetch the full interactive Repo object using the Installation Auth client
+                repo = g.get_repo(installed_repos[0].full_name)
+                logger.info("[%s] Authenticated dynamically! Auto-mapped to Repo: %s", issue.id[:8], repo.full_name)
+                
             # Fallback to Personal Access Token
-            elif github_token:
+            elif github_token and github_repo:
                 g = Github(github_token)
+                repo = g.get_repo(github_repo)
                 logger.info("[%s] Authenticated using legacy Personal Access Token", issue.id[:8])
             else:
                 logger.error("[%s] Missing GitHub Credentials", issue.id[:8])
                 await _update(issue, db_path, "fixing_failed", root_cause="Missing GitHub credentials (PAT or App Installation)")
                 return
-                
-            repo = g.get_repo(github_repo)
         except Exception as exc:
             logger.error("[%s] GitHub client init failed: %s", issue.id[:8], exc)
             await _update(issue, db_path, "fixing_failed", root_cause=str(exc))
