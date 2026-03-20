@@ -104,6 +104,7 @@
         <div class="card-body">
           <p class="error-msg">${issue.error_message || 'No message provided'}</p>
           <p class="location"><i class="fa-regular fa-file-code"></i> ${issue.file_path || '?'} : ${issue.function_name || '?'}()</p>
+          ${issue.recommendation ? '<div class="recommendation-block" style="margin-top: 1rem; padding: 0.75rem; background: rgba(139, 92, 246, 0.1); border-left: 3px solid #8b5cf6; border-radius: 4px; font-size: 0.9em; line-height: 1.5; color: #e4e4e7;"><h4 style="color: #a78bfa; margin-bottom: 0.5rem; font-weight: 600;"><i class="fa-solid fa-robot"></i> AI Ops Recommendation</h4><p>' + issue.recommendation + '</p></div>' : ''}
         </div>
         <div class="card-footer">
           <div class="badges">

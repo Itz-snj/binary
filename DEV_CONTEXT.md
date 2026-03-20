@@ -202,15 +202,14 @@ Your job:
 - Build the redaction function (regex-based)
 - Fetch the right source files from GitHub using PyGithub
 - Write the system prompt and user prompt
-- Call GPT-4o with JSON response format
+- Call Gemini API with Structured JSON Response Format
 - Parse and validate the LLM's response
-- Handle LLM failures (bad JSON, refusal, etc.)
+- Handle LLM failures (quota limits, bad formatting)
 
 Key decisions:
-- Use `response_format={"type": "json_object"}` with OpenAI
+- Use `response_schema` with Google GenAI SDK
 - Temperature 0.2 for consistency
-- If JSON parsing fails, retry once with a "please return
-  valid JSON" follow-up
+- Fallback to robust models (like 1.5-flash) if quota limits hit
 - Fetch at most 5 files (main file + test + up to 3 imports)
 
 ### Dev 3 — "The Proof" (Demo App + GitHub + Dashboard)
@@ -328,7 +327,7 @@ Both support FastAPI with a stable URL + persistent disk in one click from GitHu
 
 | Service    | What You Need           | Where to Get It              |
 |------------|-------------------------|------------------------------|
-| OpenAI     | API key (GPT-4o access) | platform.openai.com          |
+| Gemini     | API key (GenAI access)  | aistudio.google.com          |
 | GitHub     | Personal Access Token   | github.com/settings/tokens   |
 |            | (repo + PR permissions) | Scopes: repo, write:discussion |
 | Sentry     | Free tier account       | sentry.io                    |
@@ -370,13 +369,13 @@ Here is exactly what happens when a bug is triggered:
     - tests/routes/users.test.ts (test file)
     - src/services/userService.ts (imported file)
 
-11. llm_fixer.py sends prompt to GPT-4o with:
+11. llm_fixer.py sends prompt to Gemini with:
     - Error details
     - Redacted stack trace
     - All fetched source files
     - Strict rules about not swallowing errors
 
-12. GPT-4o returns JSON:
+12. Gemini returns JSON:
     {
       "root_cause": "user.profile can be null for users
                      who haven't completed onboarding...",
@@ -484,9 +483,9 @@ Sentry data, real GitHub PRs, and validated AI fixes."
    For a demo this is fine. But don't run the pipeline
    in a loop during testing.
 
-4. **GPT-4o can return malformed JSON despite
-   response_format=json_object.**
-   Always wrap the JSON parse in try/except with one retry.
+4. **Gemini API can hit Rate Limits on Free Tier**
+   If you hit a `429 RESOURCE_EXHAUSTED` limit with `limit: 0`,
+   adjust the model to `gemini-1.5-flash`.
 
 5. **PyGithub's create_file / update_file needs the
    current file SHA.**
@@ -570,7 +569,7 @@ The project is demo-ready when:
 fastapi==0.115.0
 uvicorn==0.30.0
 PyGithub==2.3.0
-openai==1.50.0
+google-genai
 pydantic==2.9.0
 aiosqlite==0.20.0
 python-dotenv==1.0.1
@@ -603,12 +602,22 @@ Backup plan if a critical component fails:
 | Failure              | Backup                                        |
 |----------------------|-----------------------------------------------|
 | Sentry webhook dead  | Use manual curl with saved JSON payload       |
-| OpenAI API down      | Use a pre-saved LLM response from earlier run |
+| Gemini API down      | Use a pre-saved LLM response from earlier run |
 | GitHub API rate limit | Use pre-created branch, show the PR manually  |
 | ngrok not working    | Run everything locally, use curl              |
 | Demo app won't start | Have a pre-recorded video of the full demo    |
 
 **ALWAYS record a backup demo video before presentations.**
+
+---
+
+## PHASE 5: SAAS UPGRADE (TOMORROW)
+
+The next steps for the team involve transitioning from Local Hackathon MVP to a SaaS Platform:
+1. **GitHub App:** Register the `@slothops-bot` GitHub app. Users install this on their repos instead of handing over raw `GITHUB_TOKEN` PATs. The engine dynamically provisions installation access tokens for fetches and PR creation.
+2. **Postgres DB:** Dump SQLite. Spin up Supabase or Neon.
+3. **User Authentication:** Allow users to log in to dashboard to view their specific issues.
+4. **Vercel Demo Deploy:** Deploy the Node.js demo app to Vercel, attach a real Sentry DSN, and prove that real users hitting the live Vercel URL generates webhooks caught by the `ngrok` running on the devs machine.
 
 ---
 ## END OF DEVELOPER CONTEXT

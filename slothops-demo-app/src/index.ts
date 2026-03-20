@@ -5,10 +5,13 @@ import dotenv from "dotenv";
 
 import usersRouter from "./routes/users";
 import ordersRouter from "./routes/orders";
+import { syncRouter } from "./routes/sync";
+import { configRouter } from "./routes/config";
+import path from "path";
 
 dotenv.config();
 
-const app = express();
+export const app = express();
 
 // --- 1. Initialize Sentry AS EARLY AS POSSIBLE ---
 Sentry.init({
@@ -26,8 +29,11 @@ Sentry.setupExpressErrorHandler(app);
 app.use(express.json());
 
 // --- 3. Mount Routes ---
+app.use(express.static(path.join(__dirname, "public")));
 app.use("/users", usersRouter);
 app.use("/orders", ordersRouter);
+app.use("/sync", syncRouter);
+app.use("/config", configRouter);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });

@@ -115,7 +115,7 @@ Use this as the ground truth when asking an LLM to work on a specific module.
 | 6. Persist issue | `database.py` | `create_issue(issue)` / `update_issue_status(...)` | Writes or updates the issue record in SQLite via aiosqlite |
 | 7. Classify | `classifier.py` | `classify(issue)` | Returns `code`, `infra`, `dependency`, or `unknown`. Only `code` proceeds to fix generation |
 | 8. Fetch source | `code_fetcher.py` | `fetch_code_context(issue)` | Uses PyGithub to download: main failing file + test file + up to 3 local imports |
-| 9. Generate fix | `llm_fixer.py` | `generate_fix(issue, code_context)` | Builds system + user prompt, calls GPT-4o (temp=0.2, JSON mode), parses `LLMFixResponse` |
+| 9. Generate fix | `llm_fixer.py` | `generate_fix(issue, code_context)` | Builds system + user prompt, calls Gemini (temp=0.2, JSON mode), parses `LLMFixResponse` |
 | 10. Confidence gate | `pipeline.py` | inside `run_pipeline()` | Checks `fix.confidence`: high/medium → create PR, low → store recommendation only |
 | 11. Create PR | `github_automation.py` | `create_fix_pr(issue, fix)` | Creates branch, commits each changed file, opens Draft PR on GitHub via PyGithub |
 | 12. Broadcast | `sse_manager.py` | `broadcast(event_type, payload)` | Emits SSE events at each stage so the dashboard updates in real-time |
@@ -145,7 +145,7 @@ The full JSON shape is documented in the **INTERNAL DATA CONTRACT** section belo
 |--------------------|-------------------------|
 | Bot Server         | Python 3.11 + FastAPI   |
 | Target Demo App    | Node.js + Express + TypeScript |
-| LLM                | OpenAI GPT-4o API       |
+| LLM                | Google Gemini API       |
 | Monitoring         | Sentry (free tier)      |
 | Git Automation     | PyGithub                |
 | Database           | SQLite (single file)    |
@@ -463,7 +463,7 @@ Replace each match with: [REDACTED_{PATTERN_NAME}]
 ## ENVIRONMENT VARIABLES
 
 ```
-OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=AIza...
 GITHUB_TOKEN=ghp_...
 GITHUB_REPO=org/slothops-demo-app
 SENTRY_WEBHOOK_SECRET=whsec_...  (optional, for signature verification)
@@ -553,6 +553,18 @@ Scenario 3 — RECURRENCE (closed-loop demo):
            a variation of the same bug
   Expected: Same fingerprint detected → previous fix marked
             ineffective → new PR with deeper analysis
+
+---
+
+## PHASE 5: SAAS MULTI-TENANT INCUBATION
+
+This phase upgrades the codebase to a multi-tenant platform, replacing hardcoded personal credentials with scalable, authenticated integrations:
+
+1. **Authentication:** User login for the dashboard (Supabase Auth / Clerk / NextAuth).
+2. **Proper DB Setup:** Migration from local `sqlite` to a hosted database (PostgreSQL via Supabase/Neon) using `workspace_id` to isolate bugs per tenant.
+3. **GitHub App Setup:** Replacing `GITHUB_TOKEN` PAT with a fully-fledged GitHub App (`@slothops-bot`). The engine will dynamically exchange the App ID and Private Key for short-lived Installation Tokens specific to individual user repositories.
+4. **Sentry Connect OAuth:** An OAuth flow allowing users to connect their Sentry accounts securely.
+5. **Live Verification:** Deploying `slothops-demo-app` strictly to Vercel, feeding Sentry events out to the internet, intercepted by `ngrok` running parallel to the SlothOps engine. 
 
 ---
 ## END OF AI CONTEXT

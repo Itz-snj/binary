@@ -14,9 +14,10 @@ from typing import Optional
 import database as db
 from classifier import classify
 from code_fetcher import fetch_code_context
+import asyncio
 from fingerprint import check_dedup, compute_fingerprint
 from github_automation import create_fix_pr
-from llm_fixer import generate_fix
+from llm_fixer import generate_fix, generate_infra_recommendation, generate_infra_recommendation
 from models import DedupeAction, IssueRecord, IssueStatus
 from redactor import redact
 from sse_manager import broadcast
@@ -99,6 +100,22 @@ async def run_pipeline(
         logger.info("[%s] Classified as: %s", issue.id[:8], classification)
 
         if classification != "code":
+            if classification == "infra":
+                logger.info("[%s] Fetching Infra Recommendation from Gemini", issue.id[:8])
+                await _update(issue, db_path, IssueStatus.FIXING.value)
+                try:
+                    recommendation = await asyncio.to_thread(generate_infra_recommendation, issue)
+                except Exception as e:
+                    recommendation = f"Failed to generate recommendation: {e}"
+                    
+                await _update(
+                    issue, db_path,
+                    IssueStatus.RECOMMENDATION_ONLY.value,
+                    root_cause="Infrastructure failure detected",
+                    recommendation=recommendation
+                )
+                return
+                
             await _update(issue, db_path, IssueStatus.IGNORED.value)
             logger.info("[%s] Not a code error — ignored", issue.id[:8])
             return

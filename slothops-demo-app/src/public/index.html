@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SlothStore — Demo Environment</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              brand: '#8b5cf6',
+              bg: '#09090b',
+              surface: '#18181b',
+              surfacehover: '#27272a'
+            }
+          }
+        }
+      }
+    </script>
+    <link href="style.css" rel="stylesheet">
+</head>
+<body class="bg-bg text-gray-200 antialiased font-sans min-h-screen flex flex-col items-center justify-center p-4">
+    
+    <div class="max-w-4xl w-full">
+        <!-- Header -->
+        <header class="mb-12 text-center">
+            <h1 class="text-4xl font-bold text-white mb-2 tracking-tight">Sloth<span class="text-brand">Store</span> Vercel App</h1>
+            <p class="text-gray-400">Click these buttons to trigger live production errors mapped to SlothOps.</p>
+        </header>
+
+        <!-- Grid of Bugs -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+            <!-- Card 1 -->
+            <div class="bg-surface border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition-all duration-200 group relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 to-rose-600 transform -translate-y-1 group-hover:translate-y-0 transition-transform"></div>
+                <h3 class="text-xl font-semibold text-white mb-2">1. Null Reference</h3>
+                <p class="text-sm text-gray-400 mb-6 h-10">Fails reading 'displayName' off an empty user profile.</p>
+                <button onclick="triggerBug('/users/999/profile')" class="action-btn w-full bg-surfacehover text-white py-2 px-4 rounded-lg flex items-center justify-between hover:bg-gray-700 transition">
+                    <span>View Profile</span>
+                    <svg class="w-4 h-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                </button>
+            </div>
+
+            <!-- Card 2 -->
+            <div class="bg-surface border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition-all duration-200 group relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-orange-400 to-amber-600 transform -translate-y-1 group-hover:translate-y-0 transition-transform"></div>
+                <h3 class="text-xl font-semibold text-white mb-2">2. Array on Undefined</h3>
+                <p class="text-sm text-gray-400 mb-6 h-10">Calls .reduce() on an uninitialized order array.</p>
+                <button onclick="triggerBug('/orders/999/subtotal')" class="action-btn w-full bg-surfacehover text-white py-2 px-4 rounded-lg flex items-center justify-between hover:bg-gray-700 transition">
+                    <span>Calculate Subtotal</span>
+                    <svg class="w-4 h-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                </button>
+            </div>
+
+            <!-- Card 3 -->
+            <div class="bg-surface border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition-all duration-200 group relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-yellow-400 to-yellow-600 transform -translate-y-1 group-hover:translate-y-0 transition-transform"></div>
+                <h3 class="text-xl font-semibold text-white mb-2">3. Header Split Error</h3>
+                <p class="text-sm text-gray-400 mb-6 h-10">Crashes attempting to access a missing auth header.</p>
+                <button onclick="triggerBug('/orders/101')" class="action-btn w-full bg-surfacehover text-white py-2 px-4 rounded-lg flex items-center justify-between hover:bg-gray-700 transition">
+                    <span>Fetch Order Auth</span>
+                    <svg class="w-4 h-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                </button>
+            </div>
+
+            <!-- Card 4 -->
+            <div class="bg-surface border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition-all duration-200 group relative overflow-hidden">
+                <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-green-400 to-emerald-500 transform -translate-y-1 group-hover:translate-y-0 transition-transform"></div>
+                <h3 class="text-xl font-semibold text-white mb-2">4. Floating Promise</h3>
+                <p class="text-sm text-gray-400 mb-6 h-10">Async loop skips Promise.all, dropping unhandled rejections.</p>
+                <button onclick="triggerBug('/sync/batch')" class="action-btn w-full bg-surfacehover text-white py-2 px-4 rounded-lg flex items-center justify-between hover:bg-gray-700 transition">
+                    <span>Run Backend Sync</span>
+                    <svg class="w-4 h-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                </button>
+            </div>
+
+            <!-- Card 5 -->
+            <div class="bg-surface border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition-all duration-200 group relative overflow-hidden md:col-span-2 lg:col-span-1">
+                <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-cyan-500 transform -translate-y-1 group-hover:translate-y-0 transition-transform"></div>
+                <h3 class="text-xl font-semibold text-white mb-2">5. Object Reference Mutation</h3>
+                <p class="text-sm text-gray-400 mb-6 h-10">Modifies global server config on-the-fly, crashing endpoint.</p>
+                <button onclick="triggerBug('/config/theme?forceDark=bad_string')" class="action-btn w-full bg-surfacehover text-white py-2 px-4 rounded-lg flex items-center justify-between hover:bg-gray-700 transition">
+                    <span>Poison Global Cache</span>
+                    <svg class="w-4 h-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                </button>
+            </div>
+            
+            <!-- Safe Control -->
+            <div class="bg-surface border border-gray-800 rounded-xl p-6 hover:border-gray-700 transition-all duration-200">
+                <h3 class="text-xl font-semibold text-white mb-2">Happy Path (Safe)</h3>
+                <p class="text-sm text-gray-400 mb-6 h-10">Works perfectly, no webhook fired.</p>
+                <button onclick="triggerBug('/health')" class="action-btn w-full bg-brand text-white py-2 px-4 rounded-lg flex items-center justify-center hover:opacity-90 transition shadow-[0_0_15px_rgba(139,92,246,0.3)]">
+                    <span>Check Health</span>
+                </button>
+            </div>
+
+        </div>
+
+        <!-- Terminal Output -->
+        <div class="mt-12 bg-black rounded-lg p-4 border border-gray-800 font-mono text-sm h-48 overflow-y-auto" id="console">
+            <div class="text-green-500">v1.2.0 • System Ready. Awaiting user action...</div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
