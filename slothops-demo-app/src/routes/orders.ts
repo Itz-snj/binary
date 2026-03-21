@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getOrderById, getOrderSubtotal } from "../services/orderService";
+import { getOrderById, getOrderSubtotal, calculateTotal } from "../services/orderService";
 import { requireAuth } from "../middleware/auth";
 
 const router = Router();
@@ -23,6 +23,27 @@ router.get("/:id/subtotal", (req, res) => {
       return res.status(404).json({ error: "Order not found" });
     }
     // Let other errors (like our TypeError bug) bubble up to Sentry
+    throw err;
+  }
+});
+
+// ✨ BUG 8 TRIGGER ✨
+// Deep call chain: orders.ts → orderService.calculateTotal → discountService.getLoyaltyDiscount → userService.getUserById
+// Order "101" (userId "1") works fine — User "1" has loyalty.tier = "gold"
+// Order "999" (userId "2") CRASHES — User "2" has no loyalty at all
+router.get("/:id/invoice", (req, res) => {
+  try {
+    const invoice = calculateTotal(req.params.id);
+    res.json({
+      orderId: req.params.id,
+      ...invoice,
+      message: "Invoice generated successfully",
+    });
+  } catch (err: any) {
+    if (err.message === "Order not found") {
+      return res.status(404).json({ error: "Order not found" });
+    }
+    // Let TypeError from deep chain bubble up to Sentry
     throw err;
   }
 });

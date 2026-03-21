@@ -177,6 +177,7 @@ slothops-engine/
 ├── llm_fixer.py             # Gemini prompt construction, fix gen + infra recommendations
 ├── github_automation.py     # Branch, commit, PR creation via GitHub App tokens
 ├── fingerprint.py           # Issue fingerprinting and dedup logic
+├── call_chain.py            # Call chain parsing and path normalization
 ├── sse_manager.py           # Server-Sent Events for dashboard
 ├── static/
 │   ├── index.html           # Dashboard UI (auth gate + issue feed + settings modal)
@@ -185,7 +186,10 @@ slothops-engine/
 │   ├── test_classifier.py
 │   ├── test_redactor.py
 │   ├── test_fingerprint.py
-│   └── test_sentry_parser.py
+│   ├── test_sentry_parser.py
+│   └── fixtures/
+│       ├── sentry_webhook.json       # Sample shallow bug payload
+│       └── sentry_deep_chain.json    # Bug 8: 4-file deep chain payload
 ├── requirements.txt
 └── .env.example
 
@@ -194,14 +198,15 @@ slothops-demo-app/
 │   ├── index.ts             # Express app with Sentry init
 │   ├── routes/
 │   │   ├── users.ts         # Bug 1: null profile reference, Bug 6: null feature config
-│   │   ├── orders.ts        # Bug 2: array on undefined, Bug 7: undefined receiptId
+│   │   ├── orders.ts        # Bug 7: undefined receiptId, Bug 8: deep chain invoice trigger
 │   │   ├── sync.ts          # Bug 4: floating async promise in forEach
 │   │   └── config.ts        # Bug 5: global singleton cache poisoning
 │   ├── middleware/
 │   │   └── auth.ts          # Bug 3: unhandled jwt.verify crash
 │   ├── services/
-│   │   ├── userService.ts
-│   │   └── orderService.ts
+│   │   ├── userService.ts   # Bug 8 root cause: missing loyalty field
+│   │   ├── orderService.ts  # Bug 2: array on undefined, Bug 8: calculateTotal
+│   │   └── discountService.ts # Bug 8 crash site: getLoyaltyDiscount
 │   └── public/
 │       ├── index.html       # Demo app frontend
 │       └── style.css

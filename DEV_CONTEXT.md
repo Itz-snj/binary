@@ -410,7 +410,7 @@ Here is exactly what happens when a bug is triggered:
 
 ---
 
-## The Demo Bugs (7 Total)
+## The Demo Bugs (8 Total)
 
 All bugs compile cleanly via `tsc` but crash at runtime when triggered.
 
@@ -476,6 +476,91 @@ const formattedId = payload.receiptId.toUpperCase(); // CRASH if receiptId missi
 ```
 **Trigger:** `POST /orders/receipt` with empty body `{}`
 **Expected fix:** Guard for `payload.receiptId` existence before calling `.toUpperCase()`.
+
+### Bug 8: Deep Call Chain — Cross-Service Discount Crash (4 FILES!)
+```
+GET /orders/999/invoice
+  → orders.ts:router.get("/:id/invoice")          ← entry point
+    → orderService.ts:calculateTotal()             ← calls discount service
+      → discountService.ts:getLoyaltyDiscount()    ← CRASH: user.loyalty.tier
+        → userService.ts:getUserById()             ← ROOT CAUSE: missing loyalty
+```
+
+**Crash site:** `discountService.ts:21` → `TypeError: Cannot read properties of undefined (reading 'tier')`
+**Root cause:** `userService.ts` — User "2" (owner of order "999") has no `loyalty` field.
+**Trigger:** `GET /orders/999/invoice`
+**Why it's hard:** Looking only at the crash site suggests `?.` on `user.loyalty.tier`. But the REAL fix needs changes in **3 files**:
+1. `userService.ts` — Make `loyalty` always present or explicitly guard
+2. `discountService.ts` — Handle missing loyalty gracefully
+3. `orderService.ts` — Handle zero/undefined discount return
+
+**Why this tests deep call chain tracing:** Bugs 1–7 crash at the same file where the root cause lives. Bug 8 crashes **3 files away** from the root cause. Without deep call chain tracing, the LLM only sees `discountService.ts` and applies a band-aid. WITH the call chain, it traces back to `userService.ts` and understands the whole picture.
+
+---
+
+## Data Flow Example: Deep Call Chain (Bug 8)
+
+How SlothOps handles Bug 8 with deep call chain tracing:
+
+```
+1. User hits GET /orders/999/invoice on demo app
+2. Code crashes deep in discountService.ts:
+   TypeError: Cannot read properties of undefined (reading 'tier')
+3. Sentry SDK captures the exception with FULL STACK TRACE
+4. Sentry sends webhook POST to our engine
+
+5. sentry_parser.py extracts:
+   - error_type: "TypeError"
+   - error_message: "Cannot read properties of undefined (reading 'tier')"
+   - file_path: "src/services/discountService.ts"  ← crash site
+   - function_name: "getLoyaltyDiscount"
+   - call_chain: [
+       userService.ts:getUserById:24,
+       discountService.ts:getLoyaltyDiscount:21,  ← crash
+       orderService.ts:calculateTotal:63,
+       orders.ts:generateInvoice:36               ← entry
+     ]
+
+6. fingerprint.py → new fingerprint → CREATE
+
+7. classifier.py → "code" → proceed to fix
+
+8. code_fetcher.py downloads:
+   - src/services/discountService.ts (crash site)
+   - tests/services/discountService.test.ts (if exists)
+   - src/services/userService.ts (import)
+
+9. llm_fixer.py sends to Gemini with FULL CALL CHAIN:
+   [1] getUserById() @ src/services/userService.ts:24
+       > return mockUsers[id] || null;
+   [2] getLoyaltyDiscount() @ src/services/discountService.ts:21
+       > const tier = (user as any).loyalty.tier;  ← CRASH
+   [3] calculateTotal() @ src/services/orderService.ts:63
+       > const discount = getLoyaltyDiscount(order.userId, subtotal);
+   [4] generateInvoice() @ src/routes/orders.ts:36
+       > const invoice = calculateTotal(req.params.id);
+
+10. Gemini analyzes call chain → identifies root cause in userService.ts
+    → requests deep_scan_needed: true, deep_scan_files: ["src/services/orderService.ts"]
+
+11. Second-pass: engine fetches orderService.ts, re-runs LLM
+
+12. Gemini returns multi-file fix:
+    {
+      files_changed: [
+        { path: "src/services/userService.ts",
+          explanation: "Add default loyalty for users without enrollment" },
+        { path: "src/services/discountService.ts",
+          explanation: "Guard for undefined loyalty before accessing tier" },
+        { path: "src/services/orderService.ts",
+          explanation: "Handle zero discount case explicitly" }
+      ],
+      confidence: "high"
+    }
+
+13. github_automation.py creates Draft PR with 3 file changes
+14. Dashboard shows issue progressing through deep scan stages
+```
 
 ---
 
