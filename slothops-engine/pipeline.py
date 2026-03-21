@@ -231,6 +231,55 @@ async def run_pipeline(
         issue.root_cause = fix.root_cause
         logger.info("[%s] Fix generated (confidence: %s)", issue.id[:8], fix.confidence)
 
+        # ── 5.5. Local Test Validation ───────────────────────────────
+        if fix.generated_tests:
+            logger.info("[%s] Validating fix with %d generated test(s)...", issue.id[:8], len(fix.generated_tests))
+            await _update(issue, db_path, "validating_fix")
+            
+            from test_runner import validate_fix
+            from llm_fixer import retry_fix_with_test_failure
+            
+            test_passed, test_output = await asyncio.to_thread(
+                validate_fix, fix, repo, installation_auth.token
+            )
+            
+            if not test_passed:
+                logger.warning("[%s] Tests failed. Attempting to re-fix...", issue.id[:8])
+                await _update(issue, db_path, "tests_failed")
+                try:
+                    await _update(issue, db_path, "refixing")
+                    fix = await retry_fix_with_test_failure(
+                        issue=issue,
+                        code_context=code_context,
+                        previous_fix=fix,
+                        test_output=test_output,
+                        gemini_api_key=gemini_api_key,
+                        previous_pr_url=previous_pr_url,
+                        call_chain=call_chain if is_recurrence else None,
+                    )
+                    
+                    # Update issue with new fix details
+                    issue.confidence = fix.confidence
+                    issue.root_cause = fix.root_cause
+                    
+                    logger.info("[%s] Validating re-fix...", issue.id[:8])
+                    await _update(issue, db_path, "validating_fix")
+                    test_passed, test_output = await asyncio.to_thread(
+                        validate_fix, fix, repo, installation_auth.token
+                    )
+                    
+                    if not test_passed:
+                        logger.warning("[%s] Re-fix failed tests. Proceeding with warning.", issue.id[:8])
+                        await _update(issue, db_path, "tests_failed")
+                        fix.pr_body += "\n\n> ⚠️ **Warning:** Generated tests failed during validation. Manual review required.\n\n<details><summary>Test Output</summary>\n\n```text\n" + test_output + "\n```\n</details>"
+                except Exception as exc:
+                    logger.error("[%s] Re-fix generation failed: %s", issue.id[:8], exc)
+                    await _update(issue, db_path, "tests_failed")
+                    fix.pr_body += "\n\n> ⚠️ **Warning:** Generated tests failed and automatic re-fix threw an error."
+            else:
+                logger.info("[%s] ✅ Generated tests passed!", issue.id[:8])
+                await _update(issue, db_path, "tests_passed")
+
         # ── 6. Confidence gating ─────────────────────────────────────
         if fix.confidence == "low":
             await _update(

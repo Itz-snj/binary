@@ -37,12 +37,33 @@ RULES:
  11. You MUST return valid JSON matching the specified format.
  12. You MUST return the COMPLETE file content for each changed file,
      not just the diff or snippet.
+ 13. You MUST generate at least one test file that validates your fix.
+     Place tests at the conventional path (e.g. tests/routes/users.test.ts).
+     Return test files in the "generated_tests" array using the same
+     FileChange format as files_changed.
+     Tests should cover: the original crash case, the fixed behavior,
+     and at least one edge case.
 
 DEEP SCAN (for recurrence / repeated errors):
 If you are analyzing a recurrence of a previously-fixed bug, you MUST
 set deep_scan_needed: true and list specific file paths in deep_scan_files
 if the root cause appears to originate from a file not included in the
 provided context. The call chain below shows the full execution path."""
+
+TEST_FAILURE_PROMPT = """The fix and tests you generated previously have FAILED validation in the local test environment.
+
+TEST OUTPUT (stdout/stderr):
+{test_output}
+
+PREVIOUS FIX FILES:
+{previous_files}
+
+PREVIOUS GENERATED TESTS:
+{previous_tests}
+
+Please analyze the test failure output above. Identify why the tests or the fix failed.
+Generate a NEW fix and/or NEW tests that resolve the failure.
+Return the updated files in the exact same JSON format."""
 
 
 def _build_user_prompt(
@@ -229,3 +250,54 @@ Do NOT output JSON. Just output plain text markdown.
     except Exception as e:
         logger.error("[%s] Infra recommendation failed: %s", issue.id[:8], e)
         return "Automatic recommendation failed due to API limits."
+
+
+async def retry_fix_with_test_failure(
+    issue: IssueRecord,
+    code_context: dict[str, str],
+    previous_fix: LLMFixResponse,
+    test_output: str,
+    gemini_api_key: str,
+    previous_pr_url: Optional[str] = None,
+    call_chain: list[CallFrame] | None = None,
+) -> LLMFixResponse:
+    """
+    Call Gemini again to fix the fix based on local test failure output.
+    """
+    client = genai.Client(api_key=gemini_api_key)
+    base_prompt = _build_user_prompt(issue, code_context, previous_pr_url, call_chain)
+    
+    prev_files = "\n".join([f"--- {f.path} ---\n{f.fixed_content}" for f in previous_fix.files_changed])
+    prev_tests = "\n".join([f"--- {t.path} ---\n{t.fixed_content}" for t in previous_fix.generated_tests])
+    
+    retry_prompt = TEST_FAILURE_PROMPT.format(
+        test_output=test_output,
+        previous_files=prev_files,
+        previous_tests=prev_tests
+    )
+    
+    full_prompt = base_prompt + "\n\n" + retry_prompt
+
+    config_dict = {
+        "temperature": 0.2,
+        "response_mime_type": "application/json",
+        "system_instruction": SYSTEM_PROMPT,
+        "response_schema": LLMFixResponse.model_json_schema(),
+    }
+    config = types.GenerateContentConfig(**config_dict)
+
+    logger.info("Calling Gemini 2.5 Pro (Refix Attempt)...")
+    messages = [{"role": "user", "parts": [{"text": full_prompt}]}]
+    
+    response = client.models.generate_content(
+        model="gemini-2.5-pro",
+        contents=messages,
+        config=config,
+    )
+    
+    raw_content = response.text or ""
+    try:
+        return _parse_response(raw_content)
+    except Exception as e:
+        logger.warning(f"Refix JSON parse failed: {e}. Falling back to original fix.")
+        return previous_fix

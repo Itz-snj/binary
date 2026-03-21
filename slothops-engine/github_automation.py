@@ -35,6 +35,12 @@ def _build_pr_body(issue: IssueRecord, fix: LLMFixResponse) -> str:
     file_explanations = ""
     for fc in fix.files_changed:
         file_explanations += f"\n### `{fc.path}`\n{fc.explanation}\n"
+        
+    test_explanations = ""
+    if hasattr(fix, 'generated_tests') and fix.generated_tests:
+        test_explanations = "\n### Generated Tests\n"
+        for tc in fix.generated_tests:
+            test_explanations += f"\n- `{tc.path}`: {tc.explanation}\n"
 
     body = f"""## 🦥 SlothOps Auto-Fix
 
@@ -56,6 +62,7 @@ def _build_pr_body(issue: IssueRecord, fix: LLMFixResponse) -> str:
 
 ### Changes
 {file_explanations}
+{test_explanations}
 
 ---
 
@@ -102,8 +109,9 @@ def create_fix_pr(
         else:
             raise RuntimeError(f"Failed to create branch: {exc}")
 
-    # ── Commit each changed file ─────────────────────────────────────
-    for fc in fix.files_changed:
+    # ── Commit each changed file and generated tests ────────────────
+    all_changes = fix.files_changed + fix.generated_tests
+    for fc in all_changes:
         try:
             # Must fetch current file to get its SHA for update
             existing = repo.get_contents(fc.path, ref=branch_name)
