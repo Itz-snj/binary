@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -22,7 +23,7 @@ import database as db
 from models import IssueRecord
 from pipeline import run_pipeline
 from sentry_parser import parse_sentry_webhook
-from sse_manager import subscribe
+from sse_manager import broadcast, subscribe
 # ── Load env early (before config.py import to avoid crash in dev) ───
 from dotenv import load_dotenv
 load_dotenv()
@@ -50,9 +51,50 @@ logging.basicConfig(
 logger = logging.getLogger("slothops.main")
 
 
+class SSELogHandler(logging.Handler):
+    """Forward Python logs to connected dashboard clients over SSE."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+
+    def emit(self, record: logging.LogRecord) -> None:
+        loop = self._loop
+        if not loop or loop.is_closed():
+            return
+
+        # Prevent accidental recursion if SSE internals log.
+        if record.name.startswith("slothops.sse"):
+            return
+
+        payload = {
+            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+
+        def _dispatch() -> None:
+            asyncio.create_task(broadcast("log", payload))
+
+        loop.call_soon_threadsafe(_dispatch)
+
+
+sse_log_handler = SSELogHandler()
+
+
 # ── Lifespan (runs on startup / shutdown) ────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    root_logger = logging.getLogger()
+    if not any(isinstance(h, SSELogHandler) for h in root_logger.handlers):
+        sse_log_handler.setLevel(getattr(logging, LOG_LEVEL.upper(), logging.INFO))
+        root_logger.addHandler(sse_log_handler)
+    sse_log_handler.set_loop(asyncio.get_running_loop())
+
     logger.info("Initialising database at %s", DATABASE_PATH)
     await db.init_db(DATABASE_PATH)
     logger.info("SlothOps engine ready 🦥")
