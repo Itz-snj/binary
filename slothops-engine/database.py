@@ -87,6 +87,36 @@ CREATE TABLE IF NOT EXISTS developer_configs (
 );
 """
 
+_CREATE_QA_REPORTS = """
+CREATE TABLE IF NOT EXISTS qa_reports (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    pr_number INTEGER NOT NULL,
+    pr_url TEXT,
+    commit_sha TEXT,
+    repo_name TEXT,
+    static_analysis TEXT,
+    functionality TEXT,
+    stress_test TEXT,
+    vapt TEXT,
+    regression TEXT,
+    performance TEXT,
+    overall_status TEXT DEFAULT 'running',
+    summary TEXT,
+    email_sent_to TEXT,
+    email_sent_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+_CREATE_QA_CONFIGS = """
+CREATE TABLE IF NOT EXISTS qa_configs (
+    workspace_id TEXT PRIMARY KEY,
+    config_json TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_fingerprint ON issues(fingerprint);",
     "CREATE INDEX IF NOT EXISTS idx_status ON issues(status);",
@@ -120,8 +150,13 @@ async def init_db(db_path: str = _DEFAULT_DB) -> None:
         await db.execute(_CREATE_WORKSPACE_USERS)
         await db.execute(_CREATE_INTEGRATIONS)
         await db.execute(_CREATE_DEVELOPER_CONFIGS)
+        await db.execute(_CREATE_QA_REPORTS)
+        await db.execute(_CREATE_QA_CONFIGS)
         for idx_sql in _CREATE_INDEXES:
             await db.execute(idx_sql)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_qa_reports_workspace ON qa_reports(workspace_id);"
+        )
         await db.commit()
 
 
@@ -346,4 +381,80 @@ async def get_developer_config(workspace_id: str, db_path: str = _DEFAULT_DB) ->
             row = await cursor.fetchone()
             if row:
                 return json.loads(row["config_json"])
+            return None
+
+
+# ── QA Agent CRUD ───────────────────────────────────────────────────────
+
+async def create_qa_report(report, db_path: str = _DEFAULT_DB) -> None:
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """INSERT INTO qa_reports (
+                id, workspace_id, pr_number, pr_url, commit_sha, repo_name,
+                static_analysis, functionality, stress_test, vapt, regression,
+                performance, overall_status, summary, email_sent_to, email_sent_at, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                report.id, report.workspace_id, report.pr_number, report.pr_url,
+                report.commit_sha, report.repo_name,
+                json.dumps(report.static_analysis) if report.static_analysis else None,
+                json.dumps(report.functionality) if report.functionality else None,
+                json.dumps(report.stress_test) if report.stress_test else None,
+                json.dumps(report.vapt) if report.vapt else None,
+                json.dumps(report.regression) if report.regression else None,
+                json.dumps(report.performance) if report.performance else None,
+                report.overall_status, report.summary, report.email_sent_to,
+                report.email_sent_at.isoformat() if report.email_sent_at else None,
+                report.created_at.isoformat()
+            )
+        )
+        await db.commit()
+
+async def update_qa_report(report_id: str, db_path: str = _DEFAULT_DB, **kwargs) -> None:
+    if not kwargs:
+        return
+    sets = []
+    values = []
+    for k, v in kwargs.items():
+        sets.append(f"{k} = ?")
+        if isinstance(v, dict):
+            values.append(json.dumps(v))
+        elif isinstance(v, datetime):
+            values.append(v.isoformat())
+        else:
+            values.append(v)
+    
+    values.append(report_id)
+    query = f"UPDATE qa_reports SET {', '.join(sets)} WHERE id = ?"
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(query, tuple(values))
+        await db.commit()
+
+async def get_qa_reports(workspace_id: str, db_path: str = _DEFAULT_DB) -> list:
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM qa_reports WHERE workspace_id = ? ORDER BY created_at DESC", (workspace_id,)) as cursor:
+            rows = await cursor.fetchall()
+            from models import QAReport
+            res = []
+            for r in rows:
+                d = dict(r)
+                for json_col in ('static_analysis', 'functionality', 'stress_test', 'vapt', 'regression', 'performance'):
+                    if d.get(json_col):
+                        d[json_col] = json.loads(d[json_col])
+                res.append(QAReport(**d))
+            return res
+
+async def get_qa_report(report_id: str, db_path: str = _DEFAULT_DB):
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM qa_reports WHERE id = ?", (report_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                from models import QAReport
+                d = dict(row)
+                for json_col in ('static_analysis', 'functionality', 'stress_test', 'vapt', 'regression', 'performance'):
+                    if d.get(json_col):
+                        d[json_col] = json.loads(d[json_col])
+                return QAReport(**d)
             return None
