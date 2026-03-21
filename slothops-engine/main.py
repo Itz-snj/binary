@@ -17,7 +17,6 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 import database as db
@@ -112,7 +111,6 @@ app = FastAPI(
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ── Auth & Security ──────────────────────────────────────────────────────
 from fastapi import Depends, HTTPException, status
@@ -218,8 +216,13 @@ async def receive_sentry_webhook(workspace_id: str, request: Request):
 
     # Parse payload into an IssueRecord
     try:
-        issue = parse_sentry_webhook(payload)
+        issue, call_frames = parse_sentry_webhook(payload)
         issue.workspace_id = workspace_id
+        # Store call frames in structured raw_payload for deep scan on recurrence
+        issue.raw_payload = json.dumps({
+            "frames": [f.model_dump() for f in call_frames],
+            "original": payload,
+        })
     except Exception as exc:
         logger.error("Failed to parse Sentry payload: %s", exc)
         return JSONResponse({"error": "Parse failed"}, status_code=400)
@@ -282,6 +285,24 @@ async def receive_github_webhook(request: Request):
     installation = payload.get("installation", {})
     installation_id = str(installation.get("id", ""))
 
+    github_event = request.headers.get("x-github-event")
+
+    if github_event == "pull_request" and action in ["opened", "synchronize"]:
+        if installation_id:
+            workspace_id = await db.get_workspace_by_installation_id(installation_id, DATABASE_PATH)
+            if workspace_id:
+                from github_automation import handle_human_pr_review
+                logger.info("Received Human PR event %s for workspace %s, queuing review...", action, workspace_id)
+                asyncio.create_task(handle_human_pr_review(
+                    payload=payload,
+                    workspace_id=workspace_id,
+                    gemini_api_key=GEMINI_API_KEY,
+                    github_app_id=GITHUB_APP_ID,
+                    github_app_private_key=GITHUB_APP_PRIVATE_KEY,
+                    db_path=DATABASE_PATH
+                ))
+                return {"status": "review_queued"}
+
     if payload.get("installation") and action == "created" and installation_id:
         # Auto-link: Find the workspace that doesn't have a GitHub integration yet
         # and link this installation to it. For multi-tenant, the frontend /api/github/link
@@ -315,6 +336,33 @@ async def receive_github_webhook(request: Request):
 
     return {"status": "ok"}
 
+
+# ── Developer Config ─────────────────────────────────────────────────────
+
+@app.post("/api/developer-config")
+async def upload_developer_config(request: Request, workspace_id: str = Depends(get_current_workspace)):
+    """Upload or update developer.json style preferences for this workspace."""
+    try:
+        config = await request.json()
+        import json as _json
+        await db.upsert_developer_config(workspace_id, _json.dumps(config), DATABASE_PATH)
+        logger.info("Developer config saved for workspace %s", workspace_id)
+        return {"status": "saved", "workspace": workspace_id}
+    except Exception as e:
+        logger.error("Failed to save developer config: %s", e)
+        raise HTTPException(status_code=400, detail=f"Invalid config: {str(e)}")
+
+
+@app.get("/api/developer-config")
+async def get_developer_config(workspace_id: str = Depends(get_current_workspace)):
+    """Retrieve current developer.json preferences for this workspace."""
+    config = await db.get_developer_config(workspace_id, DATABASE_PATH)
+    if config is None:
+        return {"config": None, "message": "No developer config set. Upload one to enable style reviews."}
+    return {"config": config}
+
+
+# ── Issue Routes ─────────────────────────────────────────────────────────
 
 @app.get("/issues")
 async def list_issues(workspace_id: str = Depends(get_current_workspace)):
