@@ -13,14 +13,14 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from models import LLMFixResponse
+
 
 logger = logging.getLogger("slothops.style_reviewer")
 
 STYLE_REVIEW_PROMPT = """You are a code style reviewer for the SlothOps automated bug remediation system.
 
 A developer has defined their code style preferences in a `developer.json` configuration.
-An automated fix has been generated for a production bug. Your job is to review the fix
+Code changes have been proposed in a Pull Request. Your job is to review the files
 against the developer's style preferences and suggest improvements.
 
 IMPORTANT RULES:
@@ -28,12 +28,12 @@ IMPORTANT RULES:
 2. Be specific: reference the file path and the exact code that violates the style.
 3. Keep comments concise and actionable (1-2 sentences each).
 4. If the fix already conforms to all style rules, return an empty array.
-5. Return valid JSON: an array of objects with {file, line_hint, comment}.
+5. Return valid JSON: an array of objects with {{file, line_hint, comment}}.
 
 DEVELOPER STYLE PREFERENCES:
 {developer_config}
 
-FILES CHANGED BY THE FIX:
+PROPOSED FILE CHANGES:
 {files_changed}
 
 Return a JSON array of style review comments. Example:
@@ -47,20 +47,21 @@ If no style violations found, return: []
 
 
 async def review_against_preferences(
-    fix: LLMFixResponse,
+    changed_files: list[dict],
     developer_config: dict,
     gemini_api_key: str,
 ) -> list[dict]:
     """
-    Send the fix + developer preferences to Gemini and get back style comments.
+    Send the file changes + developer preferences to Gemini and get back style comments.
+    changed_files: [{"path": str, "content": str}]
     Returns a list of {file, line_hint, comment} dicts.
     """
     if not developer_config:
         return []
 
     files_block = ""
-    for fc in fix.files_changed:
-        files_block += f"\n--- {fc.path} ---\n{fc.fixed_content}\n"
+    for fc in changed_files:
+        files_block += f"\n--- {fc.get('path')} ---\n{fc.get('content')}\n"
 
     prompt = STYLE_REVIEW_PROMPT.format(
         developer_config=json.dumps(developer_config, indent=2),

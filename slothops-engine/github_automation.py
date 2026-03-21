@@ -10,7 +10,7 @@ import logging
 import re
 from typing import Optional
 
-from github import Github, GithubException
+from github import Github, GithubIntegration, GithubException
 
 from models import IssueRecord, LLMFixResponse
 
@@ -169,15 +169,15 @@ def post_style_review_comments(pr_url: str, comments: list[dict], repo) -> None:
     Post developer.json style suggestions as a single PR comment.
     Each comment dict has {file, line_hint, comment}.
     """
-    if not comments:
-        return
-
     body_lines = ["## 🎨 SlothOps Style Review\n"]
     body_lines.append("The following suggestions are based on your `developer.json` preferences.\n")
     body_lines.append("These are style recommendations only — no code was changed.\n")
-    
-    for c in comments:
-        file_ref = c.get("file", "unknown")
+
+    if not comments:
+        body_lines.append("> ✅ **All clear!** No style violations found in the proposed changes.")
+    else:
+        for c in comments:
+            file_ref = c.get("file", "unknown")
         line_hint = c.get("line_hint", "")
         suggestion = c.get("comment", "")
         body_lines.append(f"- **`{file_ref}`** ({line_hint}): {suggestion}")
@@ -192,3 +192,102 @@ def post_style_review_comments(pr_url: str, comments: list[dict], repo) -> None:
         logger.info("Posted %d style review comment(s) on PR #%d", len(comments), pr_number)
     except Exception as exc:
         logger.error("Failed to post style review comments: %s", exc)
+
+def post_general_pr_comment(pr_url: str, comment_body: str, repo) -> None:
+    """Post an overarching markdown comment on a PR."""
+    if not comment_body:
+        return
+    try:
+        pr_number = int(pr_url.rstrip("/").split("/")[-1])
+        pr = repo.get_pull(pr_number)
+        pr.create_issue_comment(comment_body)
+        logger.info("Posted general code review comment on PR #%d", pr_number)
+    except Exception as exc:
+        logger.error("Failed to post general PR comment: %s", exc)
+
+async def handle_human_pr_review(
+    payload: dict,
+    workspace_id: str,
+    gemini_api_key: str,
+    github_app_id: int,
+    github_app_private_key: str,
+    db_path: str
+):
+    """
+    Handle a manually raised PR: fetch the PR files, run style and architecture
+    reviews, and post the results back to the PR.
+    """
+    import database as db
+    from style_reviewer import review_against_preferences
+    from code_reviewer import review_pr_code
+    
+    # 1. Setup GitHub Client
+    installation_id = payload.get("installation", {}).get("id")
+    if not installation_id:
+        return
+        
+    try:
+        integration = GithubIntegration(github_app_id, github_app_private_key)
+        access_token = integration.get_access_token(installation_id).token
+        gh = Github(access_token)
+        repo_name = payload["repository"]["full_name"]
+        repo = gh.get_repo(repo_name)
+    except Exception as e:
+        logger.error("Failed to auth GitHub App for PR review: %s", e)
+        return
+        
+    pr_number = payload["pull_request"]["number"]
+    pr_url = payload["pull_request"]["html_url"]
+    
+    try:
+        pr = repo.get_pull(pr_number)
+        gh_files = pr.get_files()
+    except Exception as e:
+        logger.error("Failed to fetch PR #%d files: %s", pr_number, e)
+        return
+        
+    # 2. Extract changed files & content
+    changed_files = []
+    for f in gh_files:
+        if f.status == "removed":
+            continue
+        try:
+            content_file = repo.get_contents(f.filename, ref=pr.head.sha)
+            if not isinstance(content_file, list):
+                changed_files.append({
+                    "path": f.filename,
+                    "content": content_file.decoded_content.decode("utf-8", errors="replace")
+                })
+        except Exception:
+            pass # Binary files or fetch error
+            
+    if not changed_files:
+        return
+        
+    # 3. Style Review
+    try:
+        dev_config = await db.get_developer_config(workspace_id, db_path)
+        if dev_config:
+            logger.info("🎨 Running Style Review for Human PR #%s...", pr_number)
+            style_comments = await review_against_preferences(changed_files, dev_config, gemini_api_key)
+            post_style_review_comments(pr_url, style_comments, repo)
+    except Exception as e:
+        logger.warning("Style review failed for Human PR: %s", e)
+        
+    # 4. Architecture / Logic Review
+    try:
+        logger.info("🧠 Running Architecture Review for Human PR #%s...", pr_number)
+        try:
+            ai_context_file = repo.get_contents("AI_CONTEXT.md")
+            context_str = ai_context_file.decoded_content.decode("utf-8")
+        except Exception:
+            context_str = ""
+            
+        code_review_md = await review_pr_code(
+            changed_files=changed_files,
+            codebase_context=context_str,
+            gemini_api_key=gemini_api_key,
+        )
+        post_general_pr_comment(pr_url, code_review_md, repo)
+    except Exception as e:
+        logger.warning("Code review failed for Human PR: %s", e)

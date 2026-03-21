@@ -269,6 +269,15 @@ async def get_user_workspaces(user_id: str, db_path: str = _DEFAULT_DB):
                 res.append(Workspace(**d))
             return res
 
+async def get_workspace_by_installation_id(installation_id: str, db_path: str = _DEFAULT_DB) -> Optional[str]:
+    async with aiosqlite.connect(db_path) as db:
+        async with db.execute(
+            "SELECT workspace_id FROM integrations WHERE github_installation_id = ?",
+            (str(installation_id),)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
 async def list_workspaces(db_path: str = _DEFAULT_DB):
     """Return all workspaces (used for auto-linking GitHub installations)."""
     async with aiosqlite.connect(db_path) as db:

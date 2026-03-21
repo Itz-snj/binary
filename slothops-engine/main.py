@@ -285,6 +285,24 @@ async def receive_github_webhook(request: Request):
     installation = payload.get("installation", {})
     installation_id = str(installation.get("id", ""))
 
+    github_event = request.headers.get("x-github-event")
+
+    if github_event == "pull_request" and action in ["opened", "synchronize"]:
+        if installation_id:
+            workspace_id = await db.get_workspace_by_installation_id(installation_id, DATABASE_PATH)
+            if workspace_id:
+                from github_automation import handle_human_pr_review
+                logger.info("Received Human PR event %s for workspace %s, queuing review...", action, workspace_id)
+                asyncio.create_task(handle_human_pr_review(
+                    payload=payload,
+                    workspace_id=workspace_id,
+                    gemini_api_key=GEMINI_API_KEY,
+                    github_app_id=GITHUB_APP_ID,
+                    github_app_private_key=GITHUB_APP_PRIVATE_KEY,
+                    db_path=DATABASE_PATH
+                ))
+                return {"status": "review_queued"}
+
     if payload.get("installation") and action == "created" and installation_id:
         # Auto-link: Find the workspace that doesn't have a GitHub integration yet
         # and link this installation to it. For multi-tenant, the frontend /api/github/link

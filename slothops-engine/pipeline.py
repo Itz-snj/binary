@@ -327,14 +327,15 @@ async def run_pipeline(
         )
         logger.info("[%s] ✅ Draft PR created: %s", issue.id[:8], pr_url)
 
-        # ── 8. Style Review (developer.json) ─────────────────────────
+        # ── 8. Style & Code Review ─────────────────────────────────────────
         try:
             from style_reviewer import review_against_preferences
             from github_automation import post_style_review_comments
             dev_config = await db.get_developer_config(issue.workspace_id, db_path)
             if dev_config:
                 logger.info("[%s] 🎨 Running style review against developer.json...", issue.id[:8])
-                style_comments = await review_against_preferences(fix, dev_config, gemini_api_key)
+                changed_files_list = [{"path": fc.path, "content": fc.fixed_content} for fc in fix.files_changed]
+                style_comments = await review_against_preferences(changed_files_list, dev_config, gemini_api_key)
                 if style_comments:
                     post_style_review_comments(pr_url, style_comments, repo)
                     logger.info("[%s] 🎨 Posted %d style suggestion(s) on PR", issue.id[:8], len(style_comments))
@@ -342,8 +343,30 @@ async def run_pipeline(
                     logger.info("[%s] 🎨 No style violations found", issue.id[:8])
             else:
                 logger.info("[%s] No developer.json configured — skipping style review", issue.id[:8])
+                    
+            # ── 9. Architecture / Logic Review ─────────────────────────
+            from code_reviewer import review_pr_code
+            from github_automation import post_general_pr_comment
+            logger.info("[%s] 🧠 Running architecture code review...", issue.id[:8])
+            
+            # Try to grab AI_CONTEXT.md
+            try:
+                ai_context_file = repo.get_contents("AI_CONTEXT.md")
+                context_str = ai_context_file.decoded_content.decode("utf-8")
+            except Exception:
+                context_str = ""
+                
+            code_review_md = await review_pr_code(
+                changed_files=[{"path": fc.path, "content": fc.fixed_content} for fc in fix.files_changed],
+                codebase_context=context_str,
+                gemini_api_key=gemini_api_key,
+            )
+            if code_review_md:
+                post_general_pr_comment(pr_url, code_review_md, repo)
+                logger.info("[%s] 🧠 Posted code review comment on PR", issue.id[:8])
+                
         except Exception as exc:
-            logger.warning("[%s] Style review failed (non-fatal): %s", issue.id[:8], exc)
+            logger.warning("[%s] Style/Code review failed (non-fatal): %s", issue.id[:8], exc)
 
     except Exception as exc:
         logger.exception("[%s] Unhandled pipeline error: %s", issue.id[:8], exc)

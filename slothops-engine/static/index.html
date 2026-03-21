@@ -126,6 +126,16 @@
           id="github-success-msg"><i class="fa-solid fa-check"></i> Linked GitHub Installation!</p>
       </div>
 
+      <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color);">
+        <h3><i class="fa-solid fa-code"></i> Developer Code Rules</h3>
+        <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 0.5rem;">Configure code style rules for AI-generated fixes (<code>developer.json</code>).</p>
+        <textarea id="dev-config-json" rows="6" style="width: 100%; width: -moz-available; width: -webkit-fill-available; background: var(--panel-bg); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 0.5rem; font-family: var(--font-mono); font-size: 0.85rem;" placeholder='{&#10;  "frontend": { "styling": "Tailwind CSS only" }&#10;}'></textarea>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem;">
+          <span id="dev-config-status" style="font-size: 0.85rem; color: var(--success-color);"></span>
+          <button id="btn-save-dev-config" class="btn" style="background: var(--brand-color); padding: 0.4rem 1rem;">Save Config</button>
+        </div>
+      </div>
+
       <button class="btn modal-close" id="close-settings" style="margin-top: 2rem; width: 100%;">Close Settings</button>
     </div>
   </div>
@@ -432,6 +442,44 @@
       profileName.innerText = `Hi welcome, ${email}`;
       profileEmail.innerText = email;
       profileWorkspace.innerText = workspaceName;
+
+      // Fetch Developer Config
+      fetch('/api/developer-config', { headers: { 'Authorization': `Bearer ${token}` } })
+        .then(res => res.json())
+        .then(data => {
+          if (data.config) {
+            document.getElementById('dev-config-json').value = JSON.stringify(data.config, null, 2);
+          }
+        }).catch(err => console.error('Failed to load dev config', err));
+
+      document.getElementById('btn-save-dev-config').onclick = async () => {
+        const statusEl = document.getElementById('dev-config-status');
+        const btn = document.getElementById('btn-save-dev-config');
+        try {
+          const val = document.getElementById('dev-config-json').value;
+          const parsed = val ? JSON.parse(val) : null;
+          if (parsed && typeof parsed !== 'object') throw new Error("Must be a JSON object");
+          
+          btn.innerText = "Saving...";
+          const res = await fetch('/api/developer-config', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(parsed || {})
+          });
+          if (!res.ok) throw new Error("Save failed");
+          statusEl.innerText = "Saved successfully!";
+          statusEl.style.color = "var(--success-color)";
+        } catch (e) {
+          statusEl.innerText = `Error: ${e.message}`;
+          statusEl.style.color = "var(--danger-color)";
+        } finally {
+          btn.innerText = "Save Config";
+          setTimeout(() => { statusEl.innerText = ""; }, 3000);
+        }
+      };
 
       // Intercept GitHub App Setup Redirect natively
       const urlParams = new URLSearchParams(window.location.search);
