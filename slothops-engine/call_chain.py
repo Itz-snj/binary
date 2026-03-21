@@ -50,9 +50,9 @@ def parse_call_chain(frames: list[dict]) -> list[CallFrame]:
 
         app_frames.append(CallFrame(
             file_path=normalized,
-            function_name=f.get("function", "?"),
+            function_name=f.get("function") or "?",
             line_number=f.get("lineno") or 0,
-            context_line=f.get("context_line", "").strip(),
+            context_line=(f.get("context_line") or "").strip(),
         ))
 
         if len(app_frames) >= _MAX_CALL_CHAIN_FILES:

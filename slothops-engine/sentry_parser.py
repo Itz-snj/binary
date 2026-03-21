@@ -125,9 +125,9 @@ def parse_sentry_webhook(payload: dict) -> tuple[IssueRecord, list[CallFrame]]:
                 fp = fp[:-3] + ".ts"
             all_app_call_frames.append(CallFrame(
                 file_path=fp,
-                function_name=f.get("function", "?"),
+                function_name=f.get("function") or "?",
                 line_number=f.get("lineno") or 0,
-                context_line=f.get("context_line", "").strip(),
+                context_line=(f.get("context_line") or "").strip(),
             ))
 
     stack_trace_str = _build_stack_trace_string(all_frames)

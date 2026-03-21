@@ -126,8 +126,8 @@ class LLMFixResponse(BaseModel):
     root_cause: str
     confidence: str  # high | medium | low
     files_changed: list[FileChange]
-    generated_tests: list[FileChange] = Field(default_factory=list)
+    generated_tests: list[FileChange]
     pr_title: str
     pr_body: str
-    deep_scan_needed: bool = False
-    deep_scan_files: list[str] = Field(default_factory=list)
+    deep_scan_needed: bool
+    deep_scan_files: list[str]
