@@ -81,6 +81,11 @@
       <h2>Recent Issues</h2>
       <p>Automated remediation pipeline events.</p>
     </div>
+    
+    <div class="tabs" style="display: flex; gap: 1rem; margin-bottom: 2rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+      <button class="pr-link" id="tab-issues" style="background: var(--brand-color); color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-weight: 600;">Issues Engine</button>
+      <button class="pr-link" id="tab-qa" style="background: var(--panel-bg); color: var(--text-secondary); border: 1px solid var(--border-color); padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">QA Pipeline</button>
+    </div>
 
     <section class="live-logs" id="live-logs">
       <div class="live-logs-header">
@@ -99,6 +104,22 @@
 
     <!-- Feed Container -->
     <div id="issues-feed" class="issues-feed"></div>
+    
+    <!-- QA Feed Container -->
+    <div id="qa-feed" class="issues-feed" style="display:none;">
+      <div id="qa-config-hint" style="background: linear-gradient(120deg, rgba(79,70,229,0.12), rgba(16,185,129,0.08)); border: 1px solid rgba(79,70,229,0.25); border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 0.5rem;">
+        <div style="display:flex; align-items:center; gap: 0.5rem; margin-bottom: 0.5rem;">
+          <i class="fa-solid fa-lightbulb" style="color: #fbbf24;"></i>
+          <strong style="font-size: 0.9rem;">Optional: Add a <code>.slothops.yml</code> to your repo root</strong>
+        </div>
+        <pre style="background: rgba(0,0,0,0.35); padding: 0.75rem; border-radius: 8px; font-size: 0.8rem; color: #e2e8f0; overflow-x: auto; margin-bottom: 0.5rem; line-height: 1.4;">stack: node
+start: npm start
+test: npm test
+lint: npx eslint .
+port: 3000</pre>
+        <p style="font-size: 0.8rem; color: var(--text-secondary); margin: 0;">This is <strong>not mandatory</strong> — SlothOps auto-detects your stack. But providing a config gives you full control over which tools run.</p>
+      </div>
+    </div>
   </main>
 
   <!-- Settings Modal for Webhook -->
@@ -212,6 +233,7 @@
     const userControls = document.getElementById('user-controls');
     const pulse = document.getElementById('pulse');
     const feed = document.getElementById('issues-feed');
+    const qaFeed = document.getElementById('qa-feed');
     const emptyState = document.getElementById('empty-state');
     const settingsModal = document.getElementById('settings-modal');
     const sentrySetupModal = document.getElementById('sentry-setup-modal');
@@ -236,6 +258,38 @@
     };
     clearLogsBtn.onclick = () => {
       logFeed.innerHTML = '';
+    };
+
+    // Tab Logic
+    const tabIssues = document.getElementById('tab-issues');
+    const tabQA = document.getElementById('tab-qa');
+    
+    tabIssues.onclick = () => {
+      tabIssues.style.background = 'var(--brand-color)';
+      tabIssues.style.color = 'white';
+      tabIssues.style.borderColor = 'transparent';
+      tabQA.style.background = 'var(--panel-bg)';
+      tabQA.style.color = 'var(--text-secondary)';
+      tabQA.style.borderColor = 'var(--border-color)';
+      
+      feed.style.display = 'grid';
+      qaFeed.style.display = 'none';
+      emptyState.style.display = feed.children.length > 0 ? 'none' : 'flex';
+    };
+    
+    tabQA.onclick = () => {
+      tabQA.style.background = 'var(--brand-color)';
+      tabQA.style.color = 'white';
+      tabQA.style.borderColor = 'transparent';
+      tabIssues.style.background = 'var(--panel-bg)';
+      tabIssues.style.color = 'var(--text-secondary)';
+      tabIssues.style.borderColor = 'var(--border-color)';
+      
+      feed.style.display = 'none';
+      qaFeed.style.display = 'grid';
+      emptyState.style.display = qaFeed.children.length > 0 ? 'none' : 'flex';
+      
+      loadQAReports();
     };
 
     settingsModal.onclick = (event) => {
@@ -420,6 +474,100 @@
       }
     }
 
+    function createQACard(report) {
+      const card = document.createElement('div');
+      card.className = 'issue-card slide-in';
+      card.id = `qa-${report.id}`;
+
+      let color = 'gray';
+      let icon = 'fa-circle-notch';
+      if (report.overall_status === 'passed') { color = 'green'; icon = 'fa-check-circle'; }
+      if (report.overall_status === 'failed') { color = 'red'; icon = 'fa-xmark-circle'; }
+      if (report.overall_status === 'warning') { color = 'yellow'; icon = 'fa-exclamation-triangle'; }
+      if (report.overall_status === 'bypassed') { color = 'blue'; icon = 'fa-forward-step'; }
+      if (report.overall_status === 'running') { color = 'purple'; icon = 'fa-circle-notch fa-spin'; }
+
+      let bypassBtn = '';
+      if (report.overall_status === 'failed' || report.overall_status === 'warning') {
+        bypassBtn = `<button class="btn" style="background:var(--panel-bg); color:var(--text-secondary); padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="bypassQA('${report.id}')"><i class="fa-solid fa-forward"></i> Bypass</button>`;
+      }
+
+      const prLink = report.pr_url ? `<a href="${report.pr_url}" target="_blank" class="pr-link"><i class="fa-brands fa-github"></i> View PR</a>` : '';
+
+      card.innerHTML = `
+        <div class="card-header">
+          <div class="card-title">
+            <span class="error-type">QA Report PR #${report.pr_number}</span>
+          </div>
+          <div class="card-status status-${color}">
+            <i class="fa-solid ${icon}"></i><span>${report.overall_status.toUpperCase()}</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <p class="error-msg">${report.repo_name} @ ${report.commit_sha.substring(0,7)}</p>
+          <div style="margin-top:0.5rem; font-size:0.85rem; color:var(--text-secondary); white-space:pre-wrap;">${report.summary || 'Pipeline running...'}</div>
+        </div>
+        <div class="card-footer" style="padding-top: 1rem;">
+          <div class="badges">
+            ${report.static_analysis ? '<span class="badge">Static</span>' : ''}
+            ${report.functionality ? '<span class="badge">Tests</span>' : ''}
+            ${report.vapt ? '<span class="badge">VAPT</span>' : ''}
+            ${report.stress_test ? '<span class="badge">Stress</span>' : ''}
+          </div>
+          <div class="actions" style="gap: 1rem;">
+            ${bypassBtn}
+            ${prLink}
+            <span class="time">${formatTime(report.created_at)}</span>
+          </div>
+        </div>
+      `;
+      return card;
+    }
+
+    async function bypassQA(reportId) {
+      const reason = prompt("Enter reason for bypassing QA failures:");
+      if (!reason) return;
+      
+      const token = localStorage.getItem('slothops_jwt');
+      try {
+        const res = await fetch(`/api/qa-bypass/${reportId}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason })
+        });
+        if (res.ok) {
+          loadQAReports();
+        } else {
+          alert("Failed to bypass QA.");
+        }
+      } catch (e) {
+        console.error("Bypass failed", e);
+      }
+    }
+
+    async function loadQAReports() {
+      const token = localStorage.getItem('slothops_jwt');
+      try {
+        const res = await fetch('/api/qa-reports', { headers: { 'Authorization': `Bearer ${token}` } });
+        if (res.ok) {
+          const data = await res.json();
+          qaFeed.innerHTML = '';
+          if (data && data.length > 0) {
+            emptyState.style.display = 'none';
+            data.forEach(report => {
+              const card = createQACard(report);
+              card.classList.remove('slide-in');
+              qaFeed.appendChild(card);
+            });
+          } else if (tabQA.style.color === 'white') {
+             emptyState.style.display = 'flex';
+             emptyState.querySelector('p').innerText = "No QA Reports yet";
+             emptyState.querySelector('span').innerText = "Merge an Auto-fix PR to kick off the QA pipeline.";
+          }
+        }
+      } catch (e) { console.error(e); }
+    }
+
     async function initDashboard() {
       const token = localStorage.getItem('slothops_jwt');
       if (!token) return;
@@ -526,6 +674,11 @@
 
       const handleIssueEvent = (event) => {
         const payload = JSON.parse(event.data);
+        if (payload.event === 'qa_update' || payload.event === 'qa_report') {
+            if (tabQA.style.color === 'white') loadQAReports();
+            return;
+        }
+
         emptyState.style.display = 'none';
         if (payload.id) {
           const existing = document.getElementById(`issue-${payload.id}`);

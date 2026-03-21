@@ -5,93 +5,70 @@ import subprocess
 
 logger = logging.getLogger("slothops.qa.static_analysis")
 
-def detect_tech_stack(repo_dir: str) -> dict:
-    """Very rudimentary tech stack detector based on files in root."""
-    stack = {"language": "unknown", "package_manager": "unknown"}
-    if os.path.exists(os.path.join(repo_dir, "package.json")):
-        stack["package_manager"] = "npm"
-        if os.path.exists(os.path.join(repo_dir, "tsconfig.json")):
-            stack["language"] = "typescript"
-        else:
-            stack["language"] = "javascript"
-    elif os.path.exists(os.path.join(repo_dir, "requirements.txt")) or os.path.exists(os.path.join(repo_dir, "pyproject.toml")):
-        stack["language"] = "python"
-        stack["package_manager"] = "pip"
-    return stack
-
-async def run_static_analysis(repo_dir: str, changed_files: list[str]) -> dict:
+async def run_static_analysis(repo_dir: str, changed_files: list[str], stack_config: dict = None) -> dict:
     """
-    Run static analysis on the cloned repo.
-    We return a dict with status and details.
+    Run static analysis on the cloned repo using the detected stack config.
+    Falls back to basic heuristic if no config is provided.
     """
-    stack = detect_tech_stack(repo_dir)
-    logger.info("Detected tech stack: %s", stack)
+    if not stack_config:
+        stack_config = {"language": "unknown", "lint_commands": [], "type_check_command": None}
+    
+    language = stack_config.get("language", "unknown")
+    lint_commands = stack_config.get("lint_commands", [])
+    type_check_cmd = stack_config.get("type_check_command")
+    
+    logger.info("Static analysis for stack: language=%s", language)
     
     status = "passed"
     issues = []
     summary_lines = []
     
-    # Simple typescript/javascript linting check
-    if stack["package_manager"] == "npm":
+    # 1. Run type checker if available
+    if type_check_cmd:
         try:
-            # We assume npm install was already run by the orchestrator
-            pass
-        except Exception:
-            pass
-            
-        # Run TSC if typescript
-        if stack["language"] == "typescript":
-            try:
-                # Run `npx tsc --noEmit`
-                logger.debug("Running TSC type checking...")
-                res = subprocess.run(
-                    ["npx", "tsc", "--noEmit"],
-                    cwd=repo_dir, capture_output=True, text=True
-                )
-                if res.returncode != 0:
-                    status = "warning"
-                    summary_lines.append("TypeScript compiler found errors.")
-                    # We just record the raw output for simplicity in Phase 1
-                    issues.append({"tool": "tsc", "output": res.stdout[:500] + ("..." if len(res.stdout)>500 else "")})
-                else:
-                    summary_lines.append("TypeScript compilation passed.")
-            except Exception as e:
-                logger.error("Failed to run TSC: %s", e)
-        
-        # Run ESLint
-        try:
-            logger.debug("Running ESLint...")
+            logger.debug("Running type checker: %s", type_check_cmd)
             res = subprocess.run(
-                ["npx", "eslint", ".", "--ext", ".ts,.js,.tsx,.jsx"],
-                cwd=repo_dir, capture_output=True, text=True
+                type_check_cmd.split(),
+                cwd=repo_dir, capture_output=True, text=True, timeout=60
             )
             if res.returncode != 0:
                 status = "warning"
-                summary_lines.append("ESLint reported warnings or errors.")
-                issues.append({"tool": "eslint", "output": res.stdout[:500] + ("..." if len(res.stdout)>500 else "")})
+                summary_lines.append(f"Type checker reported errors.")
+                issues.append({"tool": type_check_cmd.split()[0], "output": res.stdout[:500] + ("..." if len(res.stdout) > 500 else "")})
             else:
-                summary_lines.append("ESLint passed without issues.")
+                summary_lines.append("Type checking passed.")
+        except subprocess.TimeoutExpired:
+            logger.warning("Type checker timed out.")
+            status = "warning"
+            summary_lines.append("Type checking timed out (>60s).")
         except Exception as e:
-            logger.error("Failed to run ESLint: %s", e)
-            
-    elif stack["language"] == "python":
+            logger.error("Failed to run type checker: %s", e)
+    
+    # 2. Run linters
+    for lint_cmd in lint_commands:
         try:
-            logger.debug("Running flake8...")
+            logger.debug("Running linter: %s", lint_cmd)
             res = subprocess.run(
-                ["python", "-m", "flake8", "."],
-                cwd=repo_dir, capture_output=True, text=True
+                lint_cmd.split(),
+                cwd=repo_dir, capture_output=True, text=True, timeout=60
             )
             if res.returncode != 0:
                 status = "warning"
-                summary_lines.append("Flake8 reported issues.")
-                issues.append({"tool": "flake8", "output": res.stdout[:500] + ("..." if len(res.stdout)>500 else "")})
+                tool_name = lint_cmd.split()[0]
+                summary_lines.append(f"{tool_name} reported warnings or errors.")
+                issues.append({"tool": tool_name, "output": res.stdout[:500] + ("..." if len(res.stdout) > 500 else "")})
             else:
-                summary_lines.append("Flake8 passed.")
-        except Exception:
-            pass
+                tool_name = lint_cmd.split()[0]
+                summary_lines.append(f"{tool_name} passed.")
+        except subprocess.TimeoutExpired:
+            logger.warning("Linter timed out: %s", lint_cmd)
+            status = "warning"
+            summary_lines.append(f"Linter timed out (>60s).")
+        except Exception as e:
+            logger.error("Failed to run linter: %s", e)
             
     if not summary_lines:
-        summary_lines.append("No automated analysis tools found/configured for this stack.")
+        summary_lines.append(f"No static analysis tools configured for detected stack ({language}).")
         
     return {
         "status": status,

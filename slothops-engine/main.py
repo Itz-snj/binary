@@ -292,7 +292,8 @@ async def receive_github_webhook(request: Request):
             workspace_id = await db.get_workspace_by_installation_id(installation_id, DATABASE_PATH)
             if workspace_id:
                 from github_automation import handle_human_pr_review
-                logger.info("Received Human PR event %s for workspace %s, queuing review...", action, workspace_id)
+                from qa_pipeline import run_qa_pipeline
+                logger.info("Received Human PR event %s for workspace %s, queuing review + QA...", action, workspace_id)
                 asyncio.create_task(handle_human_pr_review(
                     payload=payload,
                     workspace_id=workspace_id,
@@ -301,24 +302,15 @@ async def receive_github_webhook(request: Request):
                     github_app_private_key=GITHUB_APP_PRIVATE_KEY,
                     db_path=DATABASE_PATH
                 ))
-                return {"status": "review_queued"}
-
-    if github_event == "pull_request" and action == "closed":
-        if payload.get("pull_request", {}).get("merged"):
-            if installation_id:
-                workspace_id = await db.get_workspace_by_installation_id(installation_id, DATABASE_PATH)
-                if workspace_id:
-                    from qa_pipeline import run_qa_pipeline
-                    logger.info("PR #%s merged — kicking off QA pipeline...", payload["pull_request"]["number"])
-                    asyncio.create_task(run_qa_pipeline(
-                        payload=payload,
-                        workspace_id=workspace_id,
-                        gemini_api_key=GEMINI_API_KEY,
-                        github_app_id=GITHUB_APP_ID,
-                        github_app_private_key=GITHUB_APP_PRIVATE_KEY,
-                        db_path=DATABASE_PATH
-                    ))
-                    return {"status": "qa_queued"}
+                asyncio.create_task(run_qa_pipeline(
+                    payload=payload,
+                    workspace_id=workspace_id,
+                    gemini_api_key=GEMINI_API_KEY,
+                    github_app_id=GITHUB_APP_ID,
+                    github_app_private_key=GITHUB_APP_PRIVATE_KEY,
+                    db_path=DATABASE_PATH
+                ))
+                return {"status": "review_and_qa_queued"}
 
     if payload.get("installation") and action == "created" and installation_id:
         # Auto-link: Find the workspace that doesn't have a GitHub integration yet
@@ -373,6 +365,44 @@ async def upload_developer_config(request: Request, workspace_id: str = Depends(
 async def list_qa_reports(workspace_id: str = Depends(get_current_workspace)):
     reports = await db.get_qa_reports(workspace_id, DATABASE_PATH)
     return [r.model_dump() for r in reports]
+
+@app.get("/api/qa-reports/{report_id}")
+async def get_qa_report(report_id: str, workspace_id: str = Depends(get_current_workspace)):
+    report = await db.get_qa_report(report_id, DATABASE_PATH)
+    if not report or report.workspace_id != workspace_id:
+        raise HTTPException(status_code=404, detail="Not found")
+    return report.model_dump()
+
+class QABypassRequest(BaseModel):
+    reason: str
+
+@app.post("/api/qa-bypass/{report_id}")
+async def bypass_qa(report_id: str, req: QABypassRequest, workspace_id: str = Depends(get_current_workspace)):
+    report = await db.get_qa_report(report_id, DATABASE_PATH)
+    if not report or report.workspace_id != workspace_id:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    logger.info("QA bypassed for PR #%s by user in workspace %s. Reason: %s", report.pr_number, workspace_id, req.reason)
+    from models import QAStatus
+    await db.update_qa_report(report_id, DATABASE_PATH, overall_status=QAStatus.BYPASSED.value, summary=f"Bypassed by operator. Reason: {req.reason}")
+    asyncio.create_task(broadcast("qa_update", {"id": report_id, "status": QAStatus.BYPASSED.value}))
+    
+    # Set GitHub commit status to success so the merge button unblocks
+    try:
+        integration = await db.get_integration(workspace_id, DATABASE_PATH)
+        if integration and integration.github_installation_id:
+            from github import GithubIntegration, Github
+            from qa_pipeline import _set_commit_status
+            gi = GithubIntegration(GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY)
+            token = gi.get_access_token(int(integration.github_installation_id)).token
+            gh = Github(token)
+            repo = gh.get_repo(report.repo_name)
+            _set_commit_status(repo, report.commit_sha, "success", f"QA bypassed: {req.reason[:100]}", report.pr_url)
+            logger.info("✅ Commit status set to success after bypass for SHA %s", report.commit_sha[:8])
+    except Exception as e:
+        logger.error("Failed to set commit status on bypass: %s", e)
+    
+    return {"status": "bypassed"}
 
 
 @app.get("/api/developer-config")

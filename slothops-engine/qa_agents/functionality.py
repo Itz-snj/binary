@@ -10,19 +10,25 @@ logger = logging.getLogger("slothops.qa.functionality")
 FUNCTIONALITY_TEST_PROMPT = """
 You are an expert QA Engineer. 
 I will provide you with a set of changed files from a Pull Request.
+The repository uses: {language} with {framework} framework.
 Your job is to write a single generic unit test file that tests the core functionality of the new changes.
-If the repository uses TypeScript/JavaScript, write a Jest/Mocha test file (e.g. `qa_functionality.test.ts`).
-If Python, write a pytest file (e.g. `test_qa_functionality.py`).
+
+If {language} is "typescript" or "javascript", write a Jest/Mocha test file.
+If {language} is "python", write a pytest file.
+If {language} is "go", write a Go test file with `_test.go` suffix.
+If {language} is "java", write a JUnit test file.
+If {language} is "rust", write a Rust test module.
+Otherwise, write the most appropriate test for the language.
 
 Output ONLY valid JSON in the following format, with no markdown formatting around it:
-{
+{{
     "tests": [
-        {
+        {{
             "path": "test_qa_functionality.py",
             "content": "import pytest\\n\\ndef test_something():\\n    pass"
-        }
+        }}
     ]
-}
+}}
 
 CHANGED FILES:
 {changed_files}
@@ -31,24 +37,36 @@ CHANGED FILES:
 async def run_functionality_tests(
     repo_dir: str, 
     changed_files: list[dict], 
-    gemini_api_key: str
+    gemini_api_key: str,
+    stack_config: dict = None
 ) -> dict:
     """
-    1. Ask Gemini to generate test cases for the changed files
+    1. Ask Gemini to generate test cases for the changed files (using detected stack)
     2. Write them to repo_dir
     3. Run the tests
     """
+    if not stack_config:
+        stack_config = {"language": "unknown", "framework": "unknown", "test_command": None}
+    
     if not changed_files:
         return {"status": "passed", "summary": "No changed files to test."}
         
-    logger.info("Functionality QA: Generating test cases via Gemini...")
+    language = stack_config.get("language", "unknown")
+    framework = stack_config.get("framework", "unknown")
+    test_command = stack_config.get("test_command")
+    
+    logger.info("Functionality QA: Generating tests for %s/%s stack...", language, framework)
     client = genai.Client(api_key=gemini_api_key)
     
     files_str = ""
     for cf in changed_files:
         files_str += f"\n--- {cf.get('path')} ---\n{cf.get('content')}\n"
         
-    prompt = FUNCTIONALITY_TEST_PROMPT.format(changed_files=files_str)
+    prompt = FUNCTIONALITY_TEST_PROMPT.format(
+        changed_files=files_str, 
+        language=language, 
+        framework=framework
+    )
     
     try:
         response = client.models.generate_content(
@@ -79,21 +97,39 @@ async def run_functionality_tests(
             f.write(t["content"])
         test_paths.append(t["path"])
         
-    # Run them
+    # Run tests using stack-detected test runner
     logger.info("Functionality QA: Running tests %s", test_paths)
     
-    # Simple heuristic to run tests based on file extension
+    # Determine command based on stack config or file extension fallback
     first_test = test_paths[0]
-    if first_test.endswith(".ts") or first_test.endswith(".js"):
-        cmd = ["npx", "jest", "--passWithNoTests"] + test_paths
-    elif first_test.endswith(".py"):
+    cmd = None
+    
+    if language in ("typescript", "javascript"):
+        cmd = ["npx", "--yes", "jest", "--passWithNoTests"] + test_paths
+    elif language == "python":
         cmd = ["python", "-m", "pytest"] + test_paths
+    elif language == "go":
+        cmd = ["go", "test", "./..."]
+    elif language == "java":
+        # Run via maven or gradle depending on framework
+        if framework == "maven":
+            cmd = ["mvn", "test"]
+        elif framework == "gradle":
+            cmd = ["./gradlew", "test"]
+    elif language == "rust":
+        cmd = ["cargo", "test"]
     else:
-        # Fallback
-        return {"status": "warning", "summary": f"Unknown test framework for {first_test}"}
+        # File extension fallback
+        if first_test.endswith((".ts", ".js")):
+            cmd = ["npx", "--yes", "jest", "--passWithNoTests"] + test_paths
+        elif first_test.endswith(".py"):
+            cmd = ["python", "-m", "pytest"] + test_paths
+    
+    if not cmd:
+        return {"status": "warning", "summary": f"No test runner configured for {language} stack."}
         
     try:
-        res = subprocess.run(cmd, cwd=repo_dir, capture_output=True, text=True)
+        res = subprocess.run(cmd, cwd=repo_dir, capture_output=True, text=True, timeout=90)
         if res.returncode == 0:
             return {
                 "status": "passed",
@@ -105,6 +141,9 @@ async def run_functionality_tests(
                 "summary": f"Generated test failed.\n\nOutput:\n{res.stdout[:500]}",
                 "failures": res.stdout[:1000]
             }
+    except subprocess.TimeoutExpired:
+        logger.warning("Test framework timed out.")
+        return {"status": "warning", "summary": "Test framework timed out (>90s)."}
     except Exception as e:
         logger.error("Functionality test execution failed: %s", e)
         return {"status": "warning", "summary": f"Failed to execute test runner: {e}"}
