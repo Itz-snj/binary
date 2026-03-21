@@ -9,6 +9,7 @@ import { syncRouter } from "./routes/sync";
 import { configRouter } from "./routes/config";
 import shippingRouter from "./routes/shipping";
 import marketingRouter from "./routes/marketing";
+import analyticsRouter from "./routes/analytics";
 import path from "path";
 
 dotenv.config();
@@ -38,6 +39,7 @@ app.use("/sync", syncRouter);
 app.use("/config", configRouter);
 app.use("/shipping", shippingRouter);
 app.use("/marketing", marketingRouter);
+app.use("/analytics", analyticsRouter);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
