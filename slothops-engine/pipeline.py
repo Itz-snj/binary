@@ -8,18 +8,19 @@ Each stage updates the DB status and broadcasts an SSE event.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Optional
 
 import database as db
 from classifier import classify
-from code_fetcher import fetch_code_context
+from code_fetcher import fetch_code_context, fetch_deep_code_context
 import asyncio
 from fingerprint import check_dedup, compute_fingerprint
 from github_automation import create_fix_pr
 from llm_fixer import generate_fix, generate_infra_recommendation
-from models import DedupeAction, IssueRecord, IssueStatus
+from models import CallFrame, DedupeAction, IssueRecord, IssueStatus
 from redactor import redact
 from sse_manager import broadcast
 
@@ -64,6 +65,9 @@ async def run_pipeline(
         fp = compute_fingerprint(issue.error_type, issue.file_path, issue.function_name, issue.error_message)
         issue.fingerprint = fp
 
+        # Initialize for use in deep scan
+        call_chain: list[CallFrame] = []
+
         existing = await db.get_issue_by_fingerprint(fp, issue.workspace_id, db_path)
 
         if existing:
@@ -83,7 +87,15 @@ async def run_pipeline(
                     existing.id, db_path, status=IssueStatus.FIX_INEFFECTIVE.value
                 )
                 issue.previous_fix_id = existing.id
-                logger.info("[%s] Re-triggering: previous fix ineffective", issue.id[:8])
+                logger.info("[%s] Re-triggering: previous fix ineffective — deep scan enabled", issue.id[:8])
+
+                # Deep call chain: parse frames from stored payload
+                try:
+                    stored = json.loads(existing.raw_payload or "{}")
+                    frame_list = stored.get("frames", [])
+                    call_chain = [CallFrame(**f) for f in frame_list]
+                except Exception:
+                    call_chain = []
 
         # Persist the new issue
         issue.fingerprint = fp
@@ -172,11 +184,22 @@ async def run_pipeline(
             await _update(issue, db_path, "fixing_failed", root_cause=str(exc))
             return
 
-        code_context = fetch_code_context(
-            file_path=issue.file_path,
-            repo=repo,
-        )
-        logger.info("[%s] Fetched %d file(s) from GitHub", issue.id[:8], len(code_context))
+        # Check if this is a recurrence (deep scan mode)
+        is_recurrence = issue.previous_fix_id is not None
+
+        if is_recurrence:
+            code_context = fetch_deep_code_context(
+                file_path=issue.file_path,
+                call_chain=call_chain,
+                repo=repo,
+            )
+            logger.info("[%s] Deep scan: fetched %d file(s) from call chain", issue.id[:8], len(code_context))
+        else:
+            code_context = fetch_code_context(
+                file_path=issue.file_path,
+                repo=repo,
+            )
+            logger.info("[%s] First pass: fetched %d file(s)", issue.id[:8], len(code_context))
 
         if not code_context:
             logger.warning("[%s] No code context found — cannot generate fix", issue.id[:8])
@@ -195,7 +218,9 @@ async def run_pipeline(
                 issue=issue,
                 code_context=code_context,
                 gemini_api_key=gemini_api_key,
-                previous_pr_url=issue.previous_fix_id,
+                previous_pr_url=previous_pr_url,
+                call_chain=call_chain if is_recurrence else None,
+                repo=repo,
             )
         except RuntimeError as exc:
             logger.error("[%s] LLM fix failed: %s", issue.id[:8], exc)

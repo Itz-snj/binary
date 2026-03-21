@@ -47,6 +47,15 @@ class DedupeAction(str, enum.Enum):
     RETRIGGER = "RETRIGGER"
 
 
+# ── Call Chain Models ───────────────────────────────────────────────────
+
+class CallFrame(BaseModel):
+    """One frame in the call stack, extracted from the Sentry stack trace."""
+    file_path: str
+    function_name: str
+    line_number: int
+    context_line: str = ""
+
 # ── Core Issue Record ────────────────────────────────────────────────────
 
 class IssueRecord(BaseModel):
@@ -71,6 +80,7 @@ class IssueRecord(BaseModel):
     root_cause: Optional[str] = None
     recommendation: Optional[str] = None
     previous_fix_id: Optional[str] = None
+    call_chain: list[CallFrame] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -118,3 +128,5 @@ class LLMFixResponse(BaseModel):
     files_changed: list[FileChange]
     pr_title: str
     pr_body: str
+    deep_scan_needed: bool = False
+    deep_scan_files: list[str] = Field(default_factory=list)

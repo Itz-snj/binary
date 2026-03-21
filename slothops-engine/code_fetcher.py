@@ -16,6 +16,7 @@ logger = logging.getLogger("slothops.code_fetcher")
 
 # Max number of import files to fetch alongside the main file
 _MAX_IMPORT_FILES = 3
+_MAX_TOTAL_FILES = 7
 
 
 def _get_test_path(file_path: str) -> Optional[str]:
@@ -144,4 +145,73 @@ def fetch_code_context(
             if imp_content:
                 context[imp_path] = imp_content
 
+    return context
+
+
+def fetch_deep_code_context(
+    file_path: str | None,
+    call_chain: list[object],
+    repo,
+) -> dict[str, str]:
+    """
+    Fetch the crash site + all files in the call chain.
+
+    Strategy:
+      1. Crash site file (from file_path)
+      2. Direct imports of crash site (up to 2)
+      3. Every unique file in call_chain (up to 5)
+      4. Cap at _MAX_TOTAL_FILES total
+    """
+    if not file_path:
+        return {}
+
+    context: dict[str, str] = {}
+
+    # 1. Crash site
+    main_content = _fetch_file(repo, file_path)
+    if main_content:
+        context[file_path] = main_content
+    else:
+        logger.warning("Could not fetch crash site: %s", file_path)
+        return context
+
+    # 2. Direct imports of crash site (reduced to 2)
+    base_dir = "/".join(file_path.split("/")[:-1])
+    for imp_path in _extract_imports(main_content, base_dir)[:2]:
+        if len(context) >= _MAX_TOTAL_FILES:
+            break
+        if imp_path not in context:
+            imp_content = _fetch_file(repo, imp_path)
+            if imp_content:
+                context[imp_path] = imp_content
+
+    # 3. Full call chain files
+    for frame in call_chain:
+        if len(context) >= _MAX_TOTAL_FILES:
+            break
+        if hasattr(frame, "file_path"):
+            fp = frame.file_path
+            if fp not in context:
+                content = _fetch_file(repo, fp)
+                if content:
+                    context[fp] = content
+
+    logger.debug("Deep fetch returned %d files (cap: %d)", len(context), _MAX_TOTAL_FILES)
+    return context
+
+
+def fetch_requested_files(
+    file_paths: list[str],
+    repo,
+) -> dict[str, str]:
+    """
+    Fetch a specific list of files requested by the LLM
+    for second-pass deep scanning.
+    """
+    context: dict[str, str] = {}
+    for fp in file_paths[:5]:  # cap at 5 additional files
+        if fp not in context:
+            content = _fetch_file(repo, fp)
+            if content:
+                context[fp] = content
     return context

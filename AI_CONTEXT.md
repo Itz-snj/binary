@@ -108,14 +108,17 @@ Use this as the ground truth when asking an LLM to work on a specific module.
 | Step | File | Function / Class | What it does |
 |------|------|------------------|--------------|
 | 1. Receive webhook | `main.py` | `POST /webhook/sentry` route | Accepts Sentry HTTP POST, returns 200 immediately, spawns async pipeline task |
-| 2. Parse payload | `sentry_parser.py` | `parse_sentry_webhook(payload)` | Extracts error_type, error_message, file_path, function_name, line_number, stack_trace from raw Sentry JSON |
+| 2. Parse payload | `sentry_parser.py` | `parse_sentry_webhook(payload)` | Extracts error_type, error_message, file_path, function_name, line_number, stack_trace + call_chain from raw Sentry JSON. Returns `(IssueRecord, list[CallFrame])` |
 | 3. Redact PII | `redactor.py` | `redact(text)` | Strips emails, IPs, tokens, JWTs, credit cards from all text fields before anything else touches them |
 | 4. Fingerprint | `fingerprint.py` | `compute_fingerprint(...)` | Creates `sha256(error_type + file_path + function_name)` — the dedup key |
 | 5. Dedup check | `fingerprint.py` | `check_dedup(fingerprint, db)` | Looks up fingerprint in SQLite; returns `CREATE`, `SKIP`, or `RETRIGGER` |
-| 6. Persist issue | `database.py` | `create_issue(issue)` / `update_issue_status(...)` | Writes or updates the issue record in SQLite via aiosqlite |
+| 6a. Persist issue | `database.py` | `create_issue(issue)` / `update_issue_status(...)` | Writes or updates the issue record in SQLite via aiosqlite |
+| 6b. Parse call chain | `call_chain.py` | `parse_call_chain(frames)` | Converts raw Sentry frame dicts into structured `CallFrame` list, filtering to app frames only (cap 5) |
 | 7. Classify | `classifier.py` | `classify(issue)` | Returns `code`, `infra`, `dependency`, or `unknown`. Only `code` proceeds to fix generation |
-| 8. Fetch source | `code_fetcher.py` | `fetch_code_context(issue)` | Uses PyGithub to download: main failing file + test file + up to 3 local imports |
-| 9. Generate fix | `llm_fixer.py` | `generate_fix(issue, code_context)` / `generate_infra_recommendation(issue)` | Builds system + user prompt, calls Gemini 2.5 Pro (temp=0.2, JSON mode), parses `LLMFixResponse`. For infra issues, generates DevOps recommendations instead of code fixes |
+| 8a. Fetch source (first pass) | `code_fetcher.py` | `fetch_code_context(issue)` | Uses PyGithub to download: main failing file + test file + up to 3 local imports |
+| 8b. Fetch deep (recurrence) | `code_fetcher.py` | `fetch_deep_code_context(issue, call_chain)` | Fetches crash site + imports + all caller files from call chain (cap 7) |
+| 9a. Generate fix (pass 1) | `llm_fixer.py` | `generate_fix(issue, code_context, call_chain)` | Builds system + user prompt, calls Gemini 2.5 Pro (temp=0.2, JSON mode), parses `LLMFixResponse`. If `deep_scan_needed`, triggers second pass |
+| 9b. Second-pass fetch | `code_fetcher.py` | `fetch_requested_files(paths, repo)` | Fetches files specifically requested by LLM for deep scan |
 | 10. Confidence gate | `pipeline.py` | inside `run_pipeline()` | Checks `fix.confidence`: high/medium → create PR, low → store recommendation only |
 | 11. Create PR | `github_automation.py` | `create_fix_pr(issue, fix)` | Creates branch, commits each changed file, opens Draft PR on GitHub via PyGithub |
 | 12. Broadcast | `sse_manager.py` | `broadcast(event_type, payload)` | Emits SSE events at each stage so the dashboard updates in real-time |
@@ -298,8 +301,26 @@ All modules must read/write this structure.
   "root_cause": "user.profile can be null for users who...",
   "recommendation": null,
   "previous_fix_id": null,
+  "call_chain": [
+    { "file_path": "src/services/userService.ts", "function_name": "getUserById", "line_number": 15, "context_line": "return users.find(u => u.id === id) ?? null;" },
+    { "file_path": "src/routes/users.ts", "function_name": "getUserProfile", "line_number": 42, "context_line": "const name = user.profile.displayName;" }
+  ],
   "created_at": "2025-01-15T03:22:00Z",
   "updated_at": "2025-01-15T03:24:30Z"
+}
+```
+
+### LLM Fix Response (deep scan fields)
+
+```json
+{
+  "root_cause": "...",
+  "confidence": "high",
+  "files_changed": [...],
+  "pr_title": "fix: ...",
+  "pr_body": "...",
+  "deep_scan_needed": false,
+  "deep_scan_files": []
 }
 ```
 
@@ -340,9 +361,17 @@ RESPONSE FORMAT (strict JSON):
       "explanation": "what was changed and why"
     }
   ],
-  "pr_title": "fix: short description of the fix",
-  "pr_body": "markdown formatted PR description"
+  \"pr_title\": \"fix: short description of the fix\",
+  \"pr_body\": \"markdown formatted PR description\",
+  \"deep_scan_needed\": false,
+  \"deep_scan_files\": []
 }
+
+DEEP SCAN (for recurrence / repeated errors):
+If you are analyzing a recurrence of a previously-fixed bug, you MUST
+set deep_scan_needed: true and list specific file paths in deep_scan_files
+if the root cause appears to originate from a file not included in the
+provided context. The call chain below shows the full execution path.
 ```
 
 ---
@@ -374,6 +403,12 @@ TEST FILE ({test_file_path}):
 (PR: {previous_pr_url}) but the same error has reoccurred.
 The previous fix was insufficient. Please analyze why
 and propose a deeper fix."}
+
+FULL CALL CHAIN (if available):
+[1] getUserById() @ src/services/userService.ts:15
+    > return users.find(u => u.id === id) ?? null;
+[2] getUserProfile() @ src/routes/users.ts:42
+    > const name = user.profile.displayName  ← CRASH
 
 Generate the fix following the rules and response format specified.
 ```

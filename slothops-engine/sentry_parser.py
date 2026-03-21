@@ -10,7 +10,7 @@ import json
 import uuid
 from typing import Any, Dict, Optional
 
-from models import IssueRecord, IssueStatus
+from models import CallFrame, IssueRecord, IssueStatus
 
 
 def _extract_frames(payload: dict) -> list[dict]:
@@ -60,7 +60,7 @@ def _build_stack_trace_string(frames: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def parse_sentry_webhook(payload: dict) -> IssueRecord:
+def parse_sentry_webhook(payload: dict) -> tuple[IssueRecord, list[CallFrame]]:
     """
     Parse a Sentry webhook JSON payload into an ``IssueRecord``.
 
@@ -104,20 +104,36 @@ def parse_sentry_webhook(payload: dict) -> IssueRecord:
     if app_frames:
         top_frame = app_frames[-1]  # last frame = top of call stack
         file_path = top_frame.get("filename") or top_frame.get("abs_path")
-        
+
         if file_path:
             if "/var/task/" in file_path:
                 file_path = file_path.split("/var/task/")[-1]
             if file_path.endswith(".js"):
                 file_path = file_path[:-3] + ".ts"
-                
+
         function_name = top_frame.get("function")
         line_number = top_frame.get("lineno")
+
+    # Parse all app frames for deep call chain tracing
+    all_app_call_frames: list[CallFrame] = []
+    for f in app_frames:
+        fp = f.get("filename") or f.get("abs_path") or ""
+        if fp:
+            if "/var/task/" in fp:
+                fp = fp.split("/var/task/", 1)[-1]
+            if fp.endswith(".js"):
+                fp = fp[:-3] + ".ts"
+            all_app_call_frames.append(CallFrame(
+                file_path=fp,
+                function_name=f.get("function", "?"),
+                line_number=f.get("lineno") or 0,
+                context_line=f.get("context_line", "").strip(),
+            ))
 
     stack_trace_str = _build_stack_trace_string(all_frames)
 
     # ── Build record ─────────────────────────────────────────────────
-    return IssueRecord(
+    issue = IssueRecord(
         id=str(uuid.uuid4()),
         error_type=error_type,
         error_message=error_message,
@@ -126,5 +142,7 @@ def parse_sentry_webhook(payload: dict) -> IssueRecord:
         line_number=line_number,
         stack_trace=stack_trace_str,
         raw_payload=json.dumps(payload),
+        call_chain=all_app_call_frames,
         status=IssueStatus.RECEIVED.value,
     )
+    return issue, all_app_call_frames

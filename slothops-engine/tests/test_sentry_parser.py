@@ -23,7 +23,7 @@ def _load_fixture() -> dict:
 class TestSentryParserWithFixture:
     def setup_method(self):
         self.payload = _load_fixture()
-        self.issue = parse_sentry_webhook(self.payload)
+        self.issue, self.call_frames = parse_sentry_webhook(self.payload)
 
     def test_error_type(self):
         assert self.issue.error_type == "TypeError"
@@ -59,6 +59,41 @@ class TestSentryParserWithFixture:
         assert "data" in restored or "event" in restored or "exception" in restored
 
 
+# ── Call chain extraction ────────────────────────────────────────────────
+
+class TestCallChainExtraction:
+    def setup_method(self):
+        self.payload = _load_fixture()
+        self.issue, self.call_frames = parse_sentry_webhook(self.payload)
+
+    def test_call_frames_returned(self):
+        """Should return call frames alongside the issue."""
+        assert isinstance(self.call_frames, list)
+        assert len(self.call_frames) > 0
+
+    def test_call_frames_skip_node_modules(self):
+        """Call frames should only include app-level frames."""
+        for frame in self.call_frames:
+            assert "node_modules" not in frame.file_path
+
+    def test_call_frames_match_issue_call_chain(self):
+        """Call frames should be identical to issue.call_chain."""
+        assert len(self.call_frames) == len(self.issue.call_chain)
+
+    def test_call_frame_has_crash_site(self):
+        """Last call frame should be the crash site."""
+        last = self.call_frames[-1]
+        assert last.file_path == "src/routes/users.ts"
+        assert last.function_name == "getUserProfile"
+        assert last.line_number == 42
+
+    def test_call_frame_path_normalisation(self):
+        """Paths should be repo-relative .ts paths."""
+        for frame in self.call_frames:
+            assert not frame.file_path.endswith(".js")
+            assert "/var/task/" not in frame.file_path
+
+
 # ── Node_modules filtering ──────────────────────────────────────────────
 
 class TestNodeModulesFiltering:
@@ -86,8 +121,9 @@ class TestNodeModulesFiltering:
                 }
             }
         }
-        issue = parse_sentry_webhook(payload)
+        issue, call_frames = parse_sentry_webhook(payload)
         assert issue.file_path is None
+        assert call_frames == []
 
 
 # ── Edge cases ───────────────────────────────────────────────────────────
@@ -95,12 +131,14 @@ class TestNodeModulesFiltering:
 class TestEdgeCases:
     def test_empty_payload(self):
         """Should not crash on a minimal/empty payload."""
-        issue = parse_sentry_webhook({})
+        issue, call_frames = parse_sentry_webhook({})
         assert issue.id is not None
         assert issue.status == "received"
+        assert call_frames == []
 
     def test_missing_exception_key(self):
         payload = {"event": {"message": "Something went wrong"}}
-        issue = parse_sentry_webhook(payload)
+        issue, call_frames = parse_sentry_webhook(payload)
         assert issue.error_message == "Something went wrong"
         assert issue.file_path is None
+        assert call_frames == []

@@ -13,7 +13,7 @@ from typing import Optional
 from google import genai
 from google.genai import types
 
-from models import IssueRecord, LLMFixResponse
+from models import CallFrame, IssueRecord, LLMFixResponse
 from redactor import redact
 
 logger = logging.getLogger("slothops.llm_fixer")
@@ -23,26 +23,33 @@ logger = logging.getLogger("slothops.llm_fixer")
 SYSTEM_PROMPT = """You are SlothOps, an automated production bug remediation system.
 
 RULES:
-1. You MUST fix the root cause, not hide the symptom.
-2. You MUST NOT wrap code in empty try/catch blocks.
-3. You MUST NOT suppress or swallow errors silently.
-4. You MUST NOT remove existing error logging or monitoring.
-5. You MUST NOT comment out failing code.
-6. You MUST NOT add generic fallbacks without clear reasoning.
-7. You MUST preserve the original code style and conventions.
-8. You MUST explain your root cause hypothesis clearly.
-9. If the fix requires changes to multiple files, specify each file separately.
-10. If you are not confident about the fix, set confidence to "low"
-    and explain why.
-11. You MUST return valid JSON matching the specified format.
-12. You MUST return the COMPLETE file content for each changed file,
-    not just the diff or snippet."""
+ 1. You MUST fix the root cause, not hide the symptom.
+ 2. You MUST NOT wrap code in empty try/catch blocks.
+ 3. You MUST NOT suppress or swallow errors silently.
+ 4. You MUST NOT remove existing error logging or monitoring.
+ 5. You MUST NOT comment out failing code.
+ 6. You MUST NOT add generic fallbacks without clear reasoning.
+ 7. You MUST preserve the original code style and conventions.
+ 8. You MUST explain your root cause hypothesis clearly.
+ 9. If the fix requires changes to multiple files, specify each file separately.
+ 10. If you are not confident about the fix, set confidence to "low"
+     and explain why.
+ 11. You MUST return valid JSON matching the specified format.
+ 12. You MUST return the COMPLETE file content for each changed file,
+     not just the diff or snippet.
+
+DEEP SCAN (for recurrence / repeated errors):
+If you are analyzing a recurrence of a previously-fixed bug, you MUST
+set deep_scan_needed: true and list specific file paths in deep_scan_files
+if the root cause appears to originate from a file not included in the
+provided context. The call chain below shows the full execution path."""
 
 
 def _build_user_prompt(
     issue: IssueRecord,
     code_context: dict[str, str],
     previous_pr_url: Optional[str] = None,
+    call_chain: list[CallFrame] | None = None,
 ) -> str:
     """Build the user prompt from the template in AI_CONTEXT.md."""
     # Redact the stack trace before including it
@@ -89,6 +96,20 @@ RELATED FILES:
 TEST FILE ({test_label}):
 {test_content}"""
 
+    # Call chain context for recurrence
+    if call_chain:
+        chain_lines = []
+        for i, frame in enumerate(call_chain):
+            chain_lines.append(f"  [{i+1}] {frame.function_name} @ {frame.file_path}:{frame.line_number}")
+            if hasattr(frame, "context_line") and frame.context_line:
+                chain_lines.append(f"      > {frame.context_line}")
+        prompt += f"""
+
+FULL CALL CHAIN:
+{" | ".join(["CRASH"] + [f"CALLER {i}" for i in range(len(call_chain)-1, 0, -1)])}
+{chr(10).join(chain_lines)}
+"""
+
     # Recurrence context
     if previous_pr_url:
         prompt += f"""
@@ -111,6 +132,8 @@ def generate_fix(
     code_context: dict[str, str],
     gemini_api_key: str,
     previous_pr_url: Optional[str] = None,
+    call_chain: list[CallFrame] | None = None,
+    repo=None,
 ) -> LLMFixResponse:
     """
     Call Gemini 2.5 Pro to generate a fix for the given issue.
@@ -119,7 +142,7 @@ def generate_fix(
         RuntimeError: If the LLM returns invalid JSON twice.
     """
     client = genai.Client(api_key=gemini_api_key)
-    user_prompt = _build_user_prompt(issue, code_context, previous_pr_url)
+    user_prompt = _build_user_prompt(issue, code_context, previous_pr_url, call_chain)
 
     # Convert Pydantic scheme to type for Gemini structured output
     config_dict = {
@@ -151,7 +174,22 @@ def generate_fix(
         raw_content = response.text or ""
 
         try:
-            return _parse_response(raw_content)
+            fix = _parse_response(raw_content)
+            # Second-pass: if LLM requested more files, fetch them and retry
+            if hasattr(fix, "deep_scan_needed") and fix.deep_scan_needed and hasattr(fix, "deep_scan_files") and fix.deep_scan_files:
+                from code_fetcher import fetch_requested_files
+                additional = fetch_requested_files(fix.deep_scan_files, repo)
+                if additional:
+                    code_context = {**code_context, **additional}
+                    user_prompt = _build_user_prompt(issue, code_context, previous_pr_url, call_chain)
+                    messages = [{"role": "user", "parts": [{"text": user_prompt}]}]
+                    response = client.models.generate_content(
+                        model="gemini-2.5-pro",
+                        contents=messages,
+                        config=config,
+                    )
+                    fix = _parse_response(response.text or "")
+            return fix
         except (json.JSONDecodeError, Exception) as exc:
             logger.warning("JSON parse failed (attempt %d): %s", attempt + 1, exc)
 

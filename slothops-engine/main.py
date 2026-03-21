@@ -174,8 +174,13 @@ async def receive_sentry_webhook(workspace_id: str, request: Request):
 
     # Parse payload into an IssueRecord
     try:
-        issue = parse_sentry_webhook(payload)
+        issue, call_frames = parse_sentry_webhook(payload)
         issue.workspace_id = workspace_id
+        # Store call frames in structured raw_payload for deep scan on recurrence
+        issue.raw_payload = json.dumps({
+            "frames": [f.model_dump() for f in call_frames],
+            "original": payload,
+        })
     except Exception as exc:
         logger.error("Failed to parse Sentry payload: %s", exc)
         return JSONResponse({"error": "Parse failed"}, status_code=400)
