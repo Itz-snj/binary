@@ -17,43 +17,61 @@ def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: int = 15) -> boo
             time.sleep(1)
     return False
 
-async def run_stress_test(repo_dir: str) -> dict:
+async def run_stress_test(repo_dir: str, stack_config: dict = None) -> dict:
     """
-    Attempt to spin up the application locally and run autocannon.
+    Spin up the application locally using the detected start_command and run autocannon.
     """
+    if not stack_config:
+        stack_config = {"start_command": None, "port": None, "language": "unknown"}
+    
     logger.info("Starting Stress Testing...")
     
     status = "passed"
     summary_lines = []
     
-    is_node = os.path.exists(os.path.join(repo_dir, "package.json"))
+    start_command = stack_config.get("start_command")
+    port = stack_config.get("port")
+    language = stack_config.get("language", "unknown")
     
-    if not is_node:
+    if not start_command:
         return {
             "status": "passed",
-            "summary": "Skipping stress test: automated local spawn only supported for Node.js apps right now."
+            "summary": f"Skipping stress test: no start_command configured for {language} stack."
         }
+    
+    if not port:
+        port = 3000  # default fallback
         
-    # Spin up npm start
-    logger.debug("Spinning up local server via 'npm start'...")
+    # Spin up the app server
+    logger.debug("Spinning up local server via '%s' on port %d...", start_command, port)
     process = None
     try:
-        # We start it as a daemon basically
+        # Set PORT env var for the child process
+        env = os.environ.copy()
+        env["PORT"] = str(port)
+        
         process = subprocess.Popen(
-            ["npm", "start"], 
+            start_command.split(), 
             cwd=repo_dir, 
             stdout=subprocess.DEVNULL, 
-            stderr=subprocess.DEVNULL
+            stderr=subprocess.DEVNULL,
+            env=env
         )
         
-        # In a real dynamic environment, we'd intercept the port from stdout or configs.
-        # For the SlothOps demo app, we'll try a few common ports.
-        ports_to_try = [3000, 8000, 8080, 5000]
-        found_port = None
+        # Wait for the port to become reachable
+        ports_to_try = [port, 3000, 8000, 8080, 5000]
+        # Deduplicate while preserving order
+        seen = set()
+        unique_ports = []
+        for p in ports_to_try:
+            if p not in seen:
+                seen.add(p)
+                unique_ports.append(p)
         
-        for port in ports_to_try:
-            if _wait_for_port(port, timeout=5):
-                found_port = port
+        found_port = None
+        for p in unique_ports:
+            if _wait_for_port(p, timeout=5):
+                found_port = p
                 break
                 
         if not found_port:
@@ -67,8 +85,8 @@ async def run_stress_test(repo_dir: str) -> dict:
         url = f"http://127.0.0.1:{found_port}"
         try:
             res = subprocess.run(
-                ["npx", "autocannon", "-c", "10", "-d", "5", "--json", url],
-                cwd=repo_dir, capture_output=True, text=True
+                ["npx", "--yes", "autocannon", "-c", "10", "-d", "5", "--json", url],
+                cwd=repo_dir, capture_output=True, text=True, timeout=30
             )
             if res.returncode != 0:
                 logger.error("autocannon failed: %s", res.stderr)
@@ -94,6 +112,10 @@ async def run_stress_test(repo_dir: str) -> dict:
                 except Exception:
                     summary_lines.append("Failed to parse autocannon JSON output.")
                     
+        except subprocess.TimeoutExpired:
+            logger.warning("autocannon timed out.")
+            status = "warning"
+            summary_lines.append("autocannon timed out (>30s).")
         except Exception as e:
             logger.error("Failed to run npx autocannon: %s", e)
             summary_lines.append(f"Error running autocannon: {e}")

@@ -345,6 +345,20 @@ def post_qa_report_comment(pr_url: str, qa_report: dict, repo, repo_name: str) -
             body_lines.append(f"### {s_emoji} Stress Testing\n")
             body_lines.append(stress.get("summary", "No details provided."))
             body_lines.append("")
+            
+        regression = qa_report.get("regression")
+        if regression:
+            r_emoji = "✅" if regression.get("status") == "passed" else ("⚠️" if regression.get("status") == "warning" else "❌")
+            body_lines.append(f"### {r_emoji} Regression Testing\n")
+            body_lines.append(regression.get("summary", "No details provided."))
+            body_lines.append("")
+            
+        performance = qa_report.get("performance")
+        if performance:
+            p_emoji = "✅" if performance.get("status") == "passed" else ("⚠️" if performance.get("status") == "warning" else "❌")
+            body_lines.append(f"### {p_emoji} Performance Baseline\n")
+            body_lines.append(performance.get("summary", "No details provided."))
+            body_lines.append("")
         
         pr.create_issue_comment("\n".join(body_lines))
         logger.info("Posted QA Report comment on PR #%d", pr_number)
