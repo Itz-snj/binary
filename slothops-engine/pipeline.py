@@ -231,9 +231,20 @@ async def run_pipeline(
         issue.root_cause = fix.root_cause
         logger.info("[%s] Fix generated (confidence: %s)", issue.id[:8], fix.confidence)
 
-        # ── 5.5. Local Test Validation ───────────────────────────────
-        if fix.generated_tests:
-            logger.info("[%s] Validating fix with %d generated test(s)...", issue.id[:8], len(fix.generated_tests))
+        # ── 5.5. Local Test Validation (Smart Sandbox Gating) ────────
+        def _should_run_sandbox(fix_response) -> bool:
+            """Only spin up an expensive sandbox for multi-file, confident fixes."""
+            if not fix_response.generated_tests:
+                return False
+            if fix_response.confidence == "low":
+                return False
+            if len(fix_response.files_changed) < 2:
+                return False
+            return True
+
+        if _should_run_sandbox(fix):
+            logger.info("[%s] 🧪 Sandbox triggered (multi-file %s-confidence fix with %d test(s))",
+                        issue.id[:8], fix.confidence, len(fix.generated_tests))
             await _update(issue, db_path, "validating_fix")
             
             from test_runner import validate_fix
@@ -279,6 +290,8 @@ async def run_pipeline(
             else:
                 logger.info("[%s] ✅ Generated tests passed!", issue.id[:8])
                 await _update(issue, db_path, "tests_passed")
+        elif fix.generated_tests:
+            logger.info("[%s] ⏭️  Skipping sandbox (single-file or low-confidence fix)", issue.id[:8])
 
         # ── 6. Confidence gating ─────────────────────────────────────
         if fix.confidence == "low":
@@ -313,6 +326,24 @@ async def run_pipeline(
             fix_pr_branch=f"slothops/fix-{issue.id[:8]}",
         )
         logger.info("[%s] ✅ Draft PR created: %s", issue.id[:8], pr_url)
+
+        # ── 8. Style Review (developer.json) ─────────────────────────
+        try:
+            from style_reviewer import review_against_preferences
+            from github_automation import post_style_review_comments
+            dev_config = await db.get_developer_config(issue.workspace_id, db_path)
+            if dev_config:
+                logger.info("[%s] 🎨 Running style review against developer.json...", issue.id[:8])
+                style_comments = await review_against_preferences(fix, dev_config, gemini_api_key)
+                if style_comments:
+                    post_style_review_comments(pr_url, style_comments, repo)
+                    logger.info("[%s] 🎨 Posted %d style suggestion(s) on PR", issue.id[:8], len(style_comments))
+                else:
+                    logger.info("[%s] 🎨 No style violations found", issue.id[:8])
+            else:
+                logger.info("[%s] No developer.json configured — skipping style review", issue.id[:8])
+        except Exception as exc:
+            logger.warning("[%s] Style review failed (non-fatal): %s", issue.id[:8], exc)
 
     except Exception as exc:
         logger.exception("[%s] Unhandled pipeline error: %s", issue.id[:8], exc)

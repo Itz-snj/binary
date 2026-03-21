@@ -79,6 +79,14 @@ CREATE TABLE IF NOT EXISTS integrations (
 );
 """
 
+_CREATE_DEVELOPER_CONFIGS = """
+CREATE TABLE IF NOT EXISTS developer_configs (
+    workspace_id TEXT PRIMARY KEY,
+    config_json TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
 _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_fingerprint ON issues(fingerprint);",
     "CREATE INDEX IF NOT EXISTS idx_status ON issues(status);",
@@ -111,6 +119,7 @@ async def init_db(db_path: str = _DEFAULT_DB) -> None:
         await db.execute(_CREATE_USERS)
         await db.execute(_CREATE_WORKSPACE_USERS)
         await db.execute(_CREATE_INTEGRATIONS)
+        await db.execute(_CREATE_DEVELOPER_CONFIGS)
         for idx_sql in _CREATE_INDEXES:
             await db.execute(idx_sql)
         await db.commit()
@@ -304,3 +313,28 @@ async def list_issues(workspace_id: str, db_path: str = _DEFAULT_DB) -> list[Iss
         async with db.execute("SELECT * FROM issues WHERE workspace_id = ? ORDER BY created_at DESC", (workspace_id,)) as cursor:
             rows = await cursor.fetchall()
             return [_row_to_issue(row) for row in rows]
+
+
+async def upsert_developer_config(workspace_id: str, config_json: str, db_path: str = _DEFAULT_DB) -> None:
+    """Save or update developer.json preferences for a workspace."""
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """INSERT INTO developer_configs (workspace_id, config_json, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(workspace_id) DO UPDATE SET
+               config_json=excluded.config_json,
+               updated_at=excluded.updated_at""",
+            (workspace_id, config_json, datetime.utcnow().isoformat())
+        )
+        await db.commit()
+
+
+async def get_developer_config(workspace_id: str, db_path: str = _DEFAULT_DB) -> dict | None:
+    """Retrieve developer.json preferences for a workspace."""
+    async with aiosqlite.connect(db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT config_json FROM developer_configs WHERE workspace_id = ?", (workspace_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return json.loads(row["config_json"])
+            return None

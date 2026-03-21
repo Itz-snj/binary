@@ -162,3 +162,33 @@ def create_fix_pr(
             logger.warning("Could not add 'needs-careful-review' label (may not exist)")
 
     return pr.html_url
+
+
+def post_style_review_comments(pr_url: str, comments: list[dict], repo) -> None:
+    """
+    Post developer.json style suggestions as a single PR comment.
+    Each comment dict has {file, line_hint, comment}.
+    """
+    if not comments:
+        return
+
+    body_lines = ["## 🎨 SlothOps Style Review\n"]
+    body_lines.append("The following suggestions are based on your `developer.json` preferences.\n")
+    body_lines.append("These are style recommendations only — no code was changed.\n")
+    
+    for c in comments:
+        file_ref = c.get("file", "unknown")
+        line_hint = c.get("line_hint", "")
+        suggestion = c.get("comment", "")
+        body_lines.append(f"- **`{file_ref}`** ({line_hint}): {suggestion}")
+
+    body = "\n".join(body_lines)
+
+    # Extract PR number from URL
+    try:
+        pr_number = int(pr_url.rstrip("/").split("/")[-1])
+        pr = repo.get_pull(pr_number)
+        pr.create_issue_comment(body)
+        logger.info("Posted %d style review comment(s) on PR #%d", len(comments), pr_number)
+    except Exception as exc:
+        logger.error("Failed to post style review comments: %s", exc)

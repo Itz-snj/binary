@@ -277,6 +277,33 @@ async def receive_github_webhook(request: Request):
     return {"status": "ok"}
 
 
+# ── Developer Config ─────────────────────────────────────────────────────
+
+@app.post("/api/developer-config")
+async def upload_developer_config(request: Request, workspace_id: str = Depends(get_current_workspace)):
+    """Upload or update developer.json style preferences for this workspace."""
+    try:
+        config = await request.json()
+        import json as _json
+        await db.upsert_developer_config(workspace_id, _json.dumps(config), DATABASE_PATH)
+        logger.info("Developer config saved for workspace %s", workspace_id)
+        return {"status": "saved", "workspace": workspace_id}
+    except Exception as e:
+        logger.error("Failed to save developer config: %s", e)
+        raise HTTPException(status_code=400, detail=f"Invalid config: {str(e)}")
+
+
+@app.get("/api/developer-config")
+async def get_developer_config(workspace_id: str = Depends(get_current_workspace)):
+    """Retrieve current developer.json preferences for this workspace."""
+    config = await db.get_developer_config(workspace_id, DATABASE_PATH)
+    if config is None:
+        return {"config": None, "message": "No developer config set. Upload one to enable style reviews."}
+    return {"config": config}
+
+
+# ── Issue Routes ─────────────────────────────────────────────────────────
+
 @app.get("/issues")
 async def list_issues(workspace_id: str = Depends(get_current_workspace)):
     issues = await db.list_issues(workspace_id, DATABASE_PATH)

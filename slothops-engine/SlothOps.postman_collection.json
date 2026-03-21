@@ -1,77 +1,238 @@
 {
   "info": {
     "name": "SlothOps Engine API",
-    "description": "API collection for SlothOps automated bug remediation pipeline.",
+    "description": "Complete API collection for SlothOps automated bug remediation pipeline. Includes auth, webhook, issue management, developer config, and real-time streaming endpoints.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{jwt_token}}",
+        "type": "string"
+      }
+    ]
   },
   "item": [
     {
-      "name": "Health Check",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{base_url}}/health",
-          "host": ["{{base_url}}"],
-          "path": ["health"]
-        }
-      }
-    },
-    {
-      "name": "List Issues",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{base_url}}/issues",
-          "host": ["{{base_url}}"],
-          "path": ["issues"]
-        }
-      }
-    },
-    {
-      "name": "Get Specific Issue",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{base_url}}/issues/{{issue_id}}",
-          "host": ["{{base_url}}"],
-          "path": ["issues", "{{issue_id}}"]
-        }
-      }
-    },
-    {
-      "name": "SSE Stream",
-      "request": {
-        "method": "GET",
-        "header": [
-          { "key": "Accept", "value": "text/event-stream" }
-        ],
-        "url": {
-          "raw": "{{base_url}}/stream",
-          "host": ["{{base_url}}"],
-          "path": ["stream"]
-        }
-      }
-    },
-    {
-      "name": "Sentry Webhook (Simulation Payload)",
-      "request": {
-        "method": "POST",
-        "header": [
-          { "key": "Content-Type", "value": "application/json" }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"data\": {\n    \"event\": {\n      \"exception\": {\n        \"values\": [\n          {\n            \"type\": \"TypeError\",\n            \"value\": \"Simulated Postman Crash\",\n            \"stacktrace\": {\n              \"frames\": [\n                {\n                  \"filename\": \"src/routes/config.ts\",\n                  \"lineno\": 42,\n                  \"function\": \"manualTrigger\"\n                }\n              ]\n            }\n          }\n        ]\n      }\n    }\n  }\n}"
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Signup",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"dev@example.com\",\n  \"password\": \"supersecret\",\n  \"workspace_name\": \"My Workspace\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/signup",
+              "host": ["{{base_url}}"],
+              "path": ["api", "signup"]
+            }
+          }
         },
-        "url": {
-          "raw": "{{base_url}}/webhook/sentry/default_workspace",
-          "host": ["{{base_url}}"],
-          "path": ["webhook", "sentry", "default_workspace"]
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "pm.environment.set('jwt_token', jsonData.access_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "username", "value": "dev@example.com" },
+                { "key": "password", "value": "supersecret" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "login"]
+            }
+          }
         }
-      }
+      ]
+    },
+    {
+      "name": "GitHub Integration",
+      "item": [
+        {
+          "name": "Link GitHub Installation",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"installation_id\": \"123456789\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/github/link",
+              "host": ["{{base_url}}"],
+              "path": ["api", "github", "link"]
+            }
+          }
+        },
+        {
+          "name": "GitHub Webhook (Installation Event)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"created\",\n  \"installation\": {\n    \"id\": 123456789\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/webhook/github",
+              "host": ["{{base_url}}"],
+              "path": ["webhook", "github"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Developer Config",
+      "item": [
+        {
+          "name": "Upload developer.json",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"frontend\": {\n    \"framework\": \"React\",\n    \"styling\": \"Tailwind CSS only, no inline styles\",\n    \"naming\": \"camelCase for variables, PascalCase for components\"\n  },\n  \"backend\": {\n    \"error_handling\": \"Always use custom AppError class\",\n    \"logging\": \"Use winston logger, never console.log\",\n    \"validation\": \"Use zod schemas for all inputs\"\n  },\n  \"general\": {\n    \"max_function_lines\": 30,\n    \"prefer_const\": true,\n    \"no_any_type\": true\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/developer-config",
+              "host": ["{{base_url}}"],
+              "path": ["api", "developer-config"]
+            }
+          }
+        },
+        {
+          "name": "Get developer.json",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/developer-config",
+              "host": ["{{base_url}}"],
+              "path": ["api", "developer-config"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Issues",
+      "item": [
+        {
+          "name": "List Issues",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/issues",
+              "host": ["{{base_url}}"],
+              "path": ["issues"]
+            }
+          }
+        },
+        {
+          "name": "Get Specific Issue",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/issues/{{issue_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["issues", "{{issue_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks & Streaming",
+      "item": [
+        {
+          "name": "Sentry Webhook (Simulation Payload)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"data\": {\n    \"event\": {\n      \"exception\": {\n        \"values\": [\n          {\n            \"type\": \"TypeError\",\n            \"value\": \"Simulated Postman Crash\",\n            \"stacktrace\": {\n              \"frames\": [\n                {\n                  \"filename\": \"src/routes/config.ts\",\n                  \"lineno\": 42,\n                  \"function\": \"manualTrigger\"\n                }\n              ]\n            }\n          }\n        ]\n      }\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/webhook/sentry/{{workspace_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["webhook", "sentry", "{{workspace_id}}"]
+            }
+          }
+        },
+        {
+          "name": "SSE Stream",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/stream?token={{jwt_token}}",
+              "host": ["{{base_url}}"],
+              "path": ["stream"],
+              "query": [
+                { "key": "token", "value": "{{jwt_token}}" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Health Check",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            }
+          }
+        }
+      ]
     }
   ],
   "variable": [
@@ -81,8 +242,18 @@
       "type": "string"
     },
     {
+      "key": "jwt_token",
+      "value": "",
+      "type": "string"
+    },
+    {
       "key": "issue_id",
       "value": "sample-uuid-here",
+      "type": "string"
+    },
+    {
+      "key": "workspace_id",
+      "value": "default_workspace",
       "type": "string"
     }
   ]
