@@ -151,6 +151,87 @@ main {
   font-size: 0.95rem;
 }
 
+.live-logs {
+  margin-bottom: 1.25rem;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(2, 6, 23, 0.85), rgba(2, 6, 23, 0.5));
+  overflow: hidden;
+}
+
+.live-logs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(15, 23, 42, 0.65);
+}
+
+.live-logs-header h3 {
+  font-size: 0.95rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.log-feed {
+  max-height: 240px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+}
+
+.log-row {
+  display: grid;
+  grid-template-columns: 85px 66px 190px 1fr;
+  gap: 0.6rem;
+  padding: 0.42rem 0.75rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  font-size: 0.78rem;
+}
+
+.log-row:last-child {
+  border-bottom: none;
+}
+
+.log-time {
+  color: #94a3b8;
+}
+
+.log-level {
+  font-weight: 700;
+}
+
+.log-source {
+  color: #a5b4fc;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.log-message {
+  color: #e2e8f0;
+  word-break: break-word;
+}
+
+.level-error .log-level,
+.level-critical .log-level {
+  color: #f87171;
+}
+
+.level-warning .log-level,
+.level-warn .log-level {
+  color: #fbbf24;
+}
+
+.level-info .log-level {
+  color: #34d399;
+}
+
+.level-debug .log-level {
+  color: #60a5fa;
+}
+
 /* ── Empty State ────────────────────────────────────── */
 .empty-state {
   text-align: center;
@@ -555,6 +636,14 @@ main {
     width: 44px;
     height: 44px;
     font-size: 1rem;
+  }
+
+  .log-row {
+    grid-template-columns: 70px 55px 1fr;
+  }
+
+  .log-source {
+    display: none;
   }
 }
 

@@ -82,6 +82,14 @@
       <p>Automated remediation pipeline events.</p>
     </div>
 
+    <section class="live-logs" id="live-logs">
+      <div class="live-logs-header">
+        <h3><i class="fa-solid fa-terminal"></i> Live Engine Logs</h3>
+        <button id="clear-logs" class="pr-link" style="padding: 0.3rem 0.55rem;">Clear</button>
+      </div>
+      <div id="log-feed" class="log-feed"></div>
+    </section>
+
     <!-- Empty State -->
     <div id="empty-state" class="empty-state">
       <i class="fa-solid fa-check-circle fa-2x"></i>
@@ -201,6 +209,8 @@
     const profileName = document.getElementById('profile-name');
     const profileEmail = document.getElementById('profile-email');
     const profileWorkspace = document.getElementById('profile-workspace');
+    const logFeed = document.getElementById('log-feed');
+    const clearLogsBtn = document.getElementById('clear-logs');
 
     // UI Toggles
     document.getElementById('to-signup').onclick = () => { loginBox.style.display = 'none'; signupBox.style.display = 'block'; };
@@ -213,6 +223,9 @@
     document.getElementById('btn-logout').onclick = () => {
       localStorage.removeItem('slothops_jwt');
       window.location.reload();
+    };
+    clearLogsBtn.onclick = () => {
+      logFeed.innerHTML = '';
     };
 
     settingsModal.onclick = (event) => {
@@ -314,6 +327,25 @@
     function formatTime(isoStr) {
       if (!isoStr) return '';
       return new Date(isoStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function appendLogRow(entry) {
+      const row = document.createElement('div');
+      const level = (entry.level || 'INFO').toUpperCase();
+      row.className = `log-row level-${level.toLowerCase()}`;
+      const ts = formatTime(entry.ts || new Date().toISOString());
+      row.innerHTML = `
+        <span class="log-time">${ts}</span>
+        <span class="log-level">${level}</span>
+        <span class="log-source">${entry.logger || 'engine'}</span>
+        <span class="log-message">${entry.message || ''}</span>
+      `;
+      logFeed.prepend(row);
+
+      const maxRows = 120;
+      while (logFeed.children.length > maxRows) {
+        logFeed.removeChild(logFeed.lastChild);
+      }
     }
 
     function createCard(issue) {
@@ -439,7 +471,8 @@
 
       // Boot secure SSE
       const source = new EventSource(`/stream?token=${token}`);
-      source.onmessage = (event) => {
+
+      const handleIssueEvent = (event) => {
         const payload = JSON.parse(event.data);
         emptyState.style.display = 'none';
         if (payload.id) {
@@ -460,6 +493,22 @@
               feed.prepend(createCard(issue));
             });
         }
+      };
+
+      source.onmessage = handleIssueEvent;
+      source.addEventListener('status_update', handleIssueEvent);
+      source.addEventListener('log', (event) => {
+        const payload = JSON.parse(event.data);
+        appendLogRow(payload);
+      });
+
+      source.onerror = () => {
+        appendLogRow({
+          ts: new Date().toISOString(),
+          level: 'WARN',
+          logger: 'slothops.ui',
+          message: 'SSE disconnected. Trying to reconnect...'
+        });
       };
     }
 
