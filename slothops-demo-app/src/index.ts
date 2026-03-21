@@ -7,6 +7,8 @@ import usersRouter from "./routes/users";
 import ordersRouter from "./routes/orders";
 import { syncRouter } from "./routes/sync";
 import { configRouter } from "./routes/config";
+import shippingRouter from "./routes/shipping";
+import marketingRouter from "./routes/marketing";
 import path from "path";
 
 dotenv.config();
@@ -34,6 +36,8 @@ app.use("/users", usersRouter);
 app.use("/orders", ordersRouter);
 app.use("/sync", syncRouter);
 app.use("/config", configRouter);
+app.use("/shipping", shippingRouter);
+app.use("/marketing", marketingRouter);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });

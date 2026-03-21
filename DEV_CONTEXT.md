@@ -496,6 +496,33 @@ GET /orders/999/invoice
 
 **Why this tests deep call chain tracing:** Bugs 1–7 crash at the same file where the root cause lives. Bug 8 crashes **3 files away** from the root cause. Without deep call chain tracing, the LLM only sees `discountService.ts` and applies a band-aid. WITH the call chain, it traces back to `userService.ts` and understands the whole picture.
 
+### Bug 9: Deep Call Chain — Shipping Weight Calculator (4 FILES!)
+```
+POST /shipping/calculate/req-102
+  → shipping.ts:router.post("/calculate/:cartId")    ← entry point
+    → shippingService.ts:calculateShippingForCart()    
+      → pricingService.ts:calculateTotalWeight()       ← CRASH: itemDetails.weight.value
+        → inventoryService.ts:getItemDetails()         ← ROOT CAUSE: missing weight
+```
+**Crash site:** `pricingService.ts:11` → `TypeError: Cannot read properties of undefined (reading 'value')`
+**Root cause:** `inventoryService.ts` — Item "req-102" has no `weight` object.
+**Trigger:** `POST /shipping/calculate/req-102`
+**Why it's hard:** Requires fetching the inventory mocked data to see the missing structure, guarding the undefined payload in the pricing engine, and writing a clean test file spanning shipping services.
+
+### Bug 10: Deep Call Chain — Marketing Campaign Notification (5 FILES!)
+```
+POST /marketing/campaigns/1/send
+  → marketing.ts:router.post("/campaigns/:id/send")  ← entry point
+    → marketingService.ts:sendCampaign()               
+      → emailService.ts:sendBlast()                    
+        → templateService.ts:renderTemplate()          ← CRASH: user.profile.displayName
+          → userService.ts:getUserById()               ← ROOT CAUSE: missing profile
+```
+**Crash site:** `templateService.ts:5` → `TypeError: Cannot read properties of null (reading 'displayName')`
+**Root cause:** `userService.ts` — User "999" (targeted by campaign "1") lacks a `profile` populated object.
+**Trigger:** `POST /marketing/campaigns/1/send`
+**Why it's hard:** Tests the test-validate-retry loop heavily. A strict mock test for sending blast emails requires initializing Express routers or calling the lowest-level service with mock DB payloads.
+
 ---
 
 ## Data Flow Example: Deep Call Chain (Bug 8)

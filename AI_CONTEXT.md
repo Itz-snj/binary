@@ -189,7 +189,9 @@ slothops-engine/
 │   ├── test_sentry_parser.py
 │   └── fixtures/
 │       ├── sentry_webhook.json       # Sample shallow bug payload
-│       └── sentry_deep_chain.json    # Bug 8: 4-file deep chain payload
+│       ├── sentry_deep_chain.json    # Bug 8: 4-file deep chain payload
+│       ├── sentry_bug9_shipping.json # Bug 9: 4-file shipping calc crash
+│       └── sentry_bug10_marketing.json # Bug 10: 5-file email blast crash
 ├── requirements.txt
 └── .env.example
 
@@ -200,13 +202,21 @@ slothops-demo-app/
 │   │   ├── users.ts         # Bug 1: null profile reference, Bug 6: null feature config
 │   │   ├── orders.ts        # Bug 7: undefined receiptId, Bug 8: deep chain invoice trigger
 │   │   ├── sync.ts          # Bug 4: floating async promise in forEach
-│   │   └── config.ts        # Bug 5: global singleton cache poisoning
+│   │   ├── config.ts        # Bug 5: global singleton cache poisoning
+│   │   ├── shipping.ts      # Bug 9 trigger: Shipping Calculator
+│   │   └── marketing.ts     # Bug 10 trigger: Marketing Blast
 │   ├── middleware/
 │   │   └── auth.ts          # Bug 3: unhandled jwt.verify crash
 │   ├── services/
-│   │   ├── userService.ts   # Bug 8 root cause: missing loyalty field
+│   │   ├── userService.ts   # Bug 8, 10 root cause: missing fields
 │   │   ├── orderService.ts  # Bug 2: array on undefined, Bug 8: calculateTotal
-│   │   └── discountService.ts # Bug 8 crash site: getLoyaltyDiscount
+│   │   ├── discountService.ts # Bug 8 crash site: getLoyaltyDiscount
+│   │   ├── inventoryService.ts # Bug 9 root cause: missing weight
+│   │   ├── pricingService.ts   # Bug 9 crash site: calc total
+│   │   ├── shippingService.ts  # Bug 9 orchestrator
+│   │   ├── templateService.ts  # Bug 10 crash site: template rendering
+│   │   ├── emailService.ts     # Bug 10 email loop
+│   │   └── marketingService.ts # Bug 10 orchestrator
 │   └── public/
 │       ├── index.html       # Demo app frontend
 │       └── style.css

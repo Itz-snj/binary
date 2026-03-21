@@ -35,6 +35,12 @@
                 <p class="panel-subtitle">Trigger TypeErrors and related runtime failures quickly.</p>
 
                 <div class="actions-grid">
+                    <!-- Deep Call Chain Scenarios -->
+                    <button onclick="triggerBug('/orders/999/invoice')" class="action-btn" style="border-color: #f59e0b; color: #fcd34d">Deep Chain 1: Invoice Crash</button>
+                    <button onclick="triggerPost('/shipping/calculate/req-102', {})" class="action-btn" style="border-color: #f59e0b; color: #fcd34d">Deep Chain 2: Shipping Calc</button>
+                    <button onclick="triggerPost('/marketing/campaigns/1/send', {})" class="action-btn" style="border-color: #f59e0b; color: #fcd34d">Deep Chain 3: Email Blast</button>
+                    
+                    <!-- Shallow Scenarios -->
                     <button onclick="triggerBug('/users/999/profile')" class="action-btn">Null Profile Name</button>
                     <button onclick="triggerBug('/users/1/premium')" class="action-btn">Premium Flag on Null</button>
                     <button onclick="triggerBug('/orders/101')" class="action-btn">Missing Auth Header</button>
