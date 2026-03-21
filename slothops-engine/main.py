@@ -17,6 +17,7 @@ from typing import Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 import database as db
@@ -111,6 +112,7 @@ app = FastAPI(
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ── Auth & Security ──────────────────────────────────────────────────────
 from fastapi import Depends, HTTPException, status
