@@ -5,7 +5,7 @@ function log(msg, type = 'info') {
     const time = new Date().toLocaleTimeString();
     
     if (type === 'error') {
-        div.className = 'text-red-500 font-bold';
+        div.className = 'text-red-400 font-semibold';
         div.innerText = `[${time}] ERR: ${msg}`;
     } else if (type === 'success') {
         div.className = 'text-green-400';
@@ -17,6 +17,11 @@ function log(msg, type = 'info') {
 
     consoleEl.appendChild(div);
     consoleEl.scrollTop = consoleEl.scrollHeight;
+}
+
+function clearConsole() {
+    consoleEl.innerHTML = '';
+    log('Console cleared. Ready for new failures.', 'info');
 }
 
 async function triggerBug(path) {
@@ -35,7 +40,7 @@ async function triggerBug(path) {
             } catch (e) {
                 // Sentry catches it on the backend, but Express dumps the stack to the frontend
                 const firstLine = text.split('\n')[0].replace(/<[^>]*>?/gm, ''); // pull the Error type from HTML dump
-                log(`Server crashed! 💥 Sentry Webhook should fire immediately. [${firstLine.substring(0, 80)}...]`, 'error');
+                log(`Server crashed. Sentry webhook should fire immediately. [${firstLine.substring(0, 90)}...]`, 'error');
             }
         }
     } catch (e) {
@@ -61,7 +66,7 @@ async function triggerPost(path, body = {}) {
                 log(`HTTP ${res.status}: ${JSON.stringify(json)}`, 'error');
             } catch (e) {
                 const firstLine = text.split('\n')[0].replace(/<[^>]*>?/gm, '');
-                log(`Server crashed! 💥 Sentry Webhook should fire immediately. [${firstLine.substring(0, 80)}...]`, 'error');
+                log(`Server crashed. Sentry webhook should fire immediately. [${firstLine.substring(0, 90)}...]`, 'error');
             }
         }
     } catch (e) {
