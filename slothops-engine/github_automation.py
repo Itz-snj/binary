@@ -331,6 +331,20 @@ def post_qa_report_comment(pr_url: str, qa_report: dict, repo, repo_name: str) -
             if functionality.get("failures"):
                 body_lines.append("\n```text\n" + str(functionality.get("failures"))[:1000] + "\n```")
             body_lines.append("")
+            
+        vapt = qa_report.get("vapt")
+        if vapt:
+            v_emoji = "✅" if vapt.get("status") == "passed" else ("⚠️" if vapt.get("status") == "warning" else "❌")
+            body_lines.append(f"### {v_emoji} VAPT Scan\n")
+            body_lines.append(vapt.get("summary", "No details provided."))
+            body_lines.append("")
+            
+        stress = qa_report.get("stress_test")
+        if stress:
+            s_emoji = "✅" if stress.get("status") == "passed" else ("⚠️" if stress.get("status") == "warning" else "❌")
+            body_lines.append(f"### {s_emoji} Stress Testing\n")
+            body_lines.append(stress.get("summary", "No details provided."))
+            body_lines.append("")
         
         pr.create_issue_comment("\n".join(body_lines))
         logger.info("Posted QA Report comment on PR #%d", pr_number)

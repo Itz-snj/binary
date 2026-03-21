@@ -10,6 +10,8 @@ from models import QAReport, QAStatus
 
 from qa_agents.static_analysis import run_static_analysis
 from qa_agents.functionality import run_functionality_tests
+from qa_agents.vapt import run_vapt_scan
+from qa_agents.stress_test import run_stress_test
 from github_automation import post_qa_report_comment
 
 logger = logging.getLogger("slothops.qa_pipeline")
@@ -123,20 +125,34 @@ async def run_qa_pipeline(
         func_res = await run_functionality_tests(tmpdir, changed_files, gemini_api_key)
         report.functionality = func_res
         
-        # Aggregate status
+        # 5. VAPT Layer
+        logger.info("🛠️ Running VAPT Agent...")
+        vapt_res = await run_vapt_scan(tmpdir)
+        report.vapt = vapt_res
+        
+        # 6. Stress Testing Layer
+        logger.info("🛠️ Running Stress Test Agent...")
+        stress_res = await run_stress_test(tmpdir)
+        report.stress_test = stress_res
+        
+        # Aggregate status across all 4 sub-agents
         final_status = QAStatus.PASSED.value
-        if static_res.get("status") == "failed" or func_res.get("status") == "failed":
+        all_res = [static_res, func_res, vapt_res, stress_res]
+        
+        if any(r.get("status") == "failed" for r in all_res):
             final_status = QAStatus.FAILED.value
-        elif static_res.get("status") == "warning" or func_res.get("status") == "warning":
+        elif any(r.get("status") == "warning" for r in all_res):
             final_status = QAStatus.WARNING.value
             
         report.overall_status = final_status
         report.summary = (
             f"**Static Analysis:** {static_res.get('summary', 'Skipped')}\\n"
-            f"**Functionality:** {func_res.get('summary', 'Skipped')}"
+            f"**Functionality:** {func_res.get('summary', 'Skipped')}\\n"
+            f"**VAPT Scan:** {vapt_res.get('summary', 'Skipped')}\\n"
+            f"**Stress Test:** {stress_res.get('summary', 'Skipped')}"
         )
         
-        # 5. Database update
+        # 7. Database update
         await db.update_qa_report(
             report_id, 
             db_path, 
