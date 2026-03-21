@@ -291,3 +291,48 @@ async def handle_human_pr_review(
         post_general_pr_comment(pr_url, code_review_md, repo)
     except Exception as e:
         logger.warning("Code review failed for Human PR: %s", e)
+
+
+def post_qa_report_comment(pr_url: str, qa_report: dict, repo, repo_name: str) -> None:
+    """
+    Post a QA report as a PR comment with line-tagged links.
+    """
+    if not qa_report:
+        return
+        
+    try:
+        pr_number = int(pr_url.rstrip("/").split("/")[-1])
+        pr = repo.get_pull(pr_number)
+        
+        status_emoji = "✅"
+        if qa_report.get("overall_status") == "failed":
+            status_emoji = "❌"
+        elif qa_report.get("overall_status") == "warning":
+            status_emoji = "⚠️"
+            
+        body_lines = [f"## {status_emoji} SlothOps QA Report\n"]
+        
+        summary = qa_report.get("summary", "")
+        if summary:
+            body_lines.append(f"**Execution Summary:**\n{summary}\n")
+            
+        static = qa_report.get("static_analysis")
+        if static:
+            s_emoji = "✅" if static.get("status") == "passed" else ("⚠️" if static.get("status") == "warning" else "❌")
+            body_lines.append(f"### {s_emoji} Static Analysis\n")
+            body_lines.append(static.get("summary", "No details provided."))
+            body_lines.append("")
+            
+        functionality = qa_report.get("functionality")
+        if functionality:
+            f_emoji = "✅" if functionality.get("status") == "passed" else ("⚠️" if functionality.get("status") == "warning" else "❌")
+            body_lines.append(f"### {f_emoji} Functionality Testing\n")
+            body_lines.append(functionality.get("summary", "No details provided."))
+            if functionality.get("failures"):
+                body_lines.append("\n```text\n" + str(functionality.get("failures"))[:1000] + "\n```")
+            body_lines.append("")
+        
+        pr.create_issue_comment("\n".join(body_lines))
+        logger.info("Posted QA Report comment on PR #%d", pr_number)
+    except Exception as exc:
+        logger.error("Failed to post QA Report PR comment: %s", exc)

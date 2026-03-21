@@ -131,3 +131,32 @@ class LLMFixResponse(BaseModel):
     pr_body: str
     deep_scan_needed: bool
     deep_scan_files: list[str]
+
+
+# ── QA Agent Models ─────────────────────────────────────────────────────
+
+class QAStatus(str, enum.Enum):
+    PASSED = "passed"
+    WARNING = "warning"
+    FAILED = "failed"
+    RUNNING = "running"
+    BYPASSED = "bypassed"
+
+class QAReport(BaseModel):
+    id: str
+    workspace_id: str
+    pr_number: int
+    pr_url: str = ""
+    commit_sha: str = ""
+    repo_name: str = ""
+    static_analysis: Optional[dict] = None
+    functionality: Optional[dict] = None
+    stress_test: Optional[dict] = None
+    vapt: Optional[dict] = None
+    regression: Optional[dict] = None
+    performance: Optional[dict] = None
+    overall_status: str = QAStatus.RUNNING.value
+    summary: str = ""
+    email_sent_to: Optional[str] = None
+    email_sent_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)

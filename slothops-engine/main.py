@@ -303,6 +303,23 @@ async def receive_github_webhook(request: Request):
                 ))
                 return {"status": "review_queued"}
 
+    if github_event == "pull_request" and action == "closed":
+        if payload.get("pull_request", {}).get("merged"):
+            if installation_id:
+                workspace_id = await db.get_workspace_by_installation_id(installation_id, DATABASE_PATH)
+                if workspace_id:
+                    from qa_pipeline import run_qa_pipeline
+                    logger.info("PR #%s merged — kicking off QA pipeline...", payload["pull_request"]["number"])
+                    asyncio.create_task(run_qa_pipeline(
+                        payload=payload,
+                        workspace_id=workspace_id,
+                        gemini_api_key=GEMINI_API_KEY,
+                        github_app_id=GITHUB_APP_ID,
+                        github_app_private_key=GITHUB_APP_PRIVATE_KEY,
+                        db_path=DATABASE_PATH
+                    ))
+                    return {"status": "qa_queued"}
+
     if payload.get("installation") and action == "created" and installation_id:
         # Auto-link: Find the workspace that doesn't have a GitHub integration yet
         # and link this installation to it. For multi-tenant, the frontend /api/github/link
@@ -351,6 +368,11 @@ async def upload_developer_config(request: Request, workspace_id: str = Depends(
     except Exception as e:
         logger.error("Failed to save developer config: %s", e)
         raise HTTPException(status_code=400, detail=f"Invalid config: {str(e)}")
+
+@app.get("/api/qa-reports")
+async def list_qa_reports(workspace_id: str = Depends(get_current_workspace)):
+    reports = await db.get_qa_reports(workspace_id, DATABASE_PATH)
+    return [r.model_dump() for r in reports]
 
 
 @app.get("/api/developer-config")
