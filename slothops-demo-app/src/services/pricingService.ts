@@ -6,8 +6,10 @@ export function calculateTotalWeight(cartItemIds: string[]): number {
   for (const itemId of cartItemIds) {
     const itemDetails = getItemDetails(itemId);
     
-    if (itemDetails) {
-      totalWeightInKg += itemDetails.weight?.value ?? 0;
+    if (itemDetails && itemDetails.weight) {
+      // FIX: Check for the existence of itemDetails.weight before accessing its properties.
+      // Digital items or items without a specified weight will be treated as having 0 weight.
+      totalWeightInKg += itemDetails.weight.value;
     }
   }
 

@@ -312,6 +312,62 @@ async def receive_github_webhook(request: Request):
                 ))
                 return {"status": "review_and_qa_queued"}
 
+    if github_event == "deployment_status":
+        deployment_status = payload.get("deployment_status", {})
+        state = deployment_status.get("state")
+        if state in ["error", "failure"] and installation_id:
+            workspace_id = await db.get_workspace_by_installation_id(installation_id, DATABASE_PATH)
+            if workspace_id:
+                sha = payload.get("deployment", {}).get("sha")
+                ref = payload.get("deployment", {}).get("ref", "")
+                repo_name = payload.get("repository", {}).get("full_name")
+                if sha and repo_name:
+                    if str(ref).startswith("slothops/backup-"):
+                        rollback_record = await db.get_rollback_by_backup_branch(str(ref), DATABASE_PATH)
+                        if rollback_record:
+                            from resolution import attempt_resolution
+                            logger.info("Received re-cycle deployment failure for resolution PR %s", ref)
+                            
+                            SMTP_HOST = os.getenv("SMTP_HOST", "")
+                            SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+                            SMTP_USER = os.getenv("SMTP_USER", "")
+                            SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+                            QA_EMAIL_RECIPIENT = os.getenv("QA_EMAIL_RECIPIENT", "")
+                            
+                            asyncio.create_task(attempt_resolution(
+                                rollback_id=rollback_record.id,
+                                workspace_id=workspace_id,
+                                repo_name=repo_name,
+                                backup_branch=str(ref),
+                                build_error_log=f"Deployment status reported {state}",
+                                failed_sha=sha,
+                                github_app_id=GITHUB_APP_ID,
+                                github_app_private_key=GITHUB_APP_PRIVATE_KEY,
+                                gemini_api_key=str(os.getenv("GEMINI_API_KEY", "")),
+                                db_path=DATABASE_PATH,
+                                smtp_config={
+                                    "SMTP_HOST": SMTP_HOST,
+                                    "SMTP_PORT": SMTP_PORT,
+                                    "SMTP_USER": SMTP_USER,
+                                    "SMTP_PASSWORD": SMTP_PASSWORD,
+                                    "QA_EMAIL_RECIPIENT": QA_EMAIL_RECIPIENT
+                                }
+                            ))
+                            return {"status": "resolution_queued"}
+                    
+                    from rollback import perform_rollback
+                    logger.info("Received deployment failure for %s, queuing rollback...", sha[:8])
+                    asyncio.create_task(perform_rollback(
+                        workspace_id=workspace_id,
+                        repo_name=repo_name,
+                        failed_sha=sha,
+                        github_app_id=GITHUB_APP_ID,
+                        github_app_private_key=GITHUB_APP_PRIVATE_KEY,
+                        db_path=DATABASE_PATH,
+                        failure_reason=f"Deployment status reported {state}"
+                    ))
+                    return {"status": "rollback_queued"}
+
     if payload.get("installation") and action == "created" and installation_id:
         # Auto-link: Find the workspace that doesn't have a GitHub integration yet
         # and link this installation to it. For multi-tenant, the frontend /api/github/link
@@ -372,6 +428,29 @@ async def get_qa_report(report_id: str, workspace_id: str = Depends(get_current_
     if not report or report.workspace_id != workspace_id:
         raise HTTPException(status_code=404, detail="Not found")
     return report.model_dump()
+
+@app.get("/api/rollbacks")
+async def list_rollbacks(workspace_id: str = Depends(get_current_workspace)):
+    rollbacks = await db.get_rollbacks(workspace_id, DATABASE_PATH)
+    res = []
+    for r in rollbacks:
+        r_dict = r.model_dump()
+        resolutions = await db.get_resolutions_for_rollback(r.id, DATABASE_PATH)
+        r_dict["resolutions"] = [res_rec.model_dump() for res_rec in resolutions]
+        res.append(r_dict)
+    return res
+
+@app.get("/api/rollbacks/{rollback_id}")
+async def get_rollback_record(rollback_id: str, workspace_id: str = Depends(get_current_workspace)):
+    r = await db.get_rollback(rollback_id, DATABASE_PATH)
+    if not r or r.workspace_id != workspace_id:
+        raise HTTPException(status_code=404, detail="Not found")
+    r_dict = r.model_dump()
+    resolutions = await db.get_resolutions_for_rollback(r.id, DATABASE_PATH)
+    r_dict["resolutions"] = [res_rec.model_dump() for res_rec in resolutions]
+    return r_dict
+
+
 
 class QABypassRequest(BaseModel):
     reason: str

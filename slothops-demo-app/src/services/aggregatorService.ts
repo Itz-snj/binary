@@ -22,9 +22,9 @@ export function aggregateByCategory(
   return categories.map((category) => {
     const total = category.items.reduce((sum, item) => sum + item.amount, 0);
 
-    // BUG: category.metadata can be null for "refunds",
-    // but we unconditionally access .currency here.
-    const currency = category.metadata!.currency;  // ← CRASH when metadata is null
+    // FIX: The type for TransactionCategory now guarantees metadata is not null,
+    // so the unsafe non-null assertion is no longer needed.
+    const currency = category.metadata.currency;
 
     return {
       category: category.name,

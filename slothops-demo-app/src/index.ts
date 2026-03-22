@@ -10,7 +10,6 @@ import { configRouter } from "./routes/config";
 import shippingRouter from "./routes/shipping";
 import marketingRouter from "./routes/marketing";
 import analyticsRouter from "./routes/analytics";
-import settingsRouter from "./routes/settings";
 import path from "path";
 
 dotenv.config();
@@ -41,11 +40,10 @@ app.use("/config", configRouter);
 app.use("/shipping", shippingRouter);
 app.use("/marketing", marketingRouter);
 app.use("/analytics", analyticsRouter);
-app.use("/settings", settingsRouter);
 
 app.get("/health", (req, res) => {
-  console.log("Health check pinged");
-  res.json({ status: "ok" });
+  const status: number = "healthy";
+  res.json({ status });
 });
 
 app.get("/debug-sentry", function mainHandler(req, res) {

@@ -16,6 +16,7 @@ Sentry error alert → AI analyzes root cause → Draft PR waiting for your revi
 *   **Intelligent Context Gathering:** Scans the failing file and automatically fetches associated test files and local imports from GitHub to provide the LLM with full context.
 *   **Smart Deduplication:** Calculates a SHA-256 fingerprint for every trace. Duplicates are skipped if a fix is already pending, or re-triggered if a previous fix failed in production.
 *   **Automated PR Creation:** Automatically branches from `main`, stages the fixed code, and opens a Draft Pull Request enriched with a confidence rating and failure metadata.
+*   **Production Auto-Rollbacks & Self-Healing:** Catches `deployment_status` failures, locally reverts the broken commit via sandbox, force-pushes `main` to restore stability, and immediately loops the broken branch back into the LLM for Auto-Resolution.
 
 ---
 
@@ -35,9 +36,10 @@ Sentry error alert → AI analyzes root cause → Draft PR waiting for your revi
 1. **Detection:** A bug crashes in the target app, causing Sentry to fire a realtime webhook.
 2. **Ingestion & Redaction:** The engine parses the payload, identifies the top application frame, and strips all PII from the stack trace.
 3. **Classification:** The engine decides if this is a `code` bug. Infrastructure blips (like a killed database connection) are ignored.
-4. **Context Fetching:** The bot downloads the failing source file, its test file, and relevant local dependencies directly from GitHub.
-5. **Fix Generation:** GPT-4o acts as the engineer, providing root-cause analysis and a complete code diff.
-6. **Automation:** A neat, formatted Draft PR is automatically staged and opened on GitHub for human review.
+4. **Production Rescue (If needed):** If a merge to `main` broke the production deployment (e.g. Vercel), SlothOps catches the webhook, clones the repo, and runs `git revert` to automatically rescue production.
+5. **Context Fetching:** The bot downloads the failing source file, its test file, and relevant local dependencies directly from GitHub.
+6. **Fix Generation:** GPT-4o/Gemini acts as the engineer, providing root-cause analysis and a complete code diff.
+7. **Automation:** A neat, formatted Draft PR is automatically staged and opened on GitHub for human review.
 
 ---
 

@@ -799,6 +799,42 @@ If QA fails but the developer knows it's safe:
 2. Click "Bypass" on the failing report
 3. Enter a reason → commit status changes to SUCCESS → merge unblocked
 
+---
+
+## PHASE 7: PRODUCTION AUTO-ROLLBACK & RESOLUTION
+
+### What It Does
+If a broken commit merges to `main` and Vercel (or any CI) deployment fails, SlothOps rescues production automatically, saving the failing code to a side branch and asking the LLM to fix it.
+
+### The Flow
+```
+Vercel Build Fails → GitHub deployment_status webhook 
+  → SlothOps receives webhook payload (state=failure)
+  → rollback.py: Clones repo locally 
+  → Creates branch `slothops/backup-[sha]` 
+  → Reverts bad commit on `main`
+  [Loop Prevention: Aborts if commit message starts with "Revert"]
+  → Pushes reverted `main` (Production Restored ✅)
+  → Triggers resolution.py asynchronously
+
+resolution.py:
+  → Fetch code and build logs from backup branch
+  → LLM generates fix
+  → Commits fix directly to `slothops/backup-[sha]`
+  → Opens Auto-Fix PR against `main`
+  
+Re-cycle Logic:
+  If the Auto-Fix PR fails deployment AGAIN, SlothOps catches the failure on `slothops/backup-[sha]` and loops back into `resolution.py` (max 3 times).
+```
+
+### New Files to Know
+| File | What It Does |
+|---|---|
+| `rollback.py` | Sandbox git clone, branch backup, git revert, infinite loop prevention |
+| `resolution.py` | LLM fix generation orchestration, commit injection, PR creation |
+| `models.py` | `RollbackRecord`, `ResolutionRecord` schemas |
+| `static/index.html` | Renders nested Rollback & Resolution cards via SSE |
+
 ### Stack Detection
 The engine auto-detects Node/TS, Python/Django/Flask, Go, Java, Rust from marker files.
 Users can optionally add `.slothops.yml` at repo root to override defaults.

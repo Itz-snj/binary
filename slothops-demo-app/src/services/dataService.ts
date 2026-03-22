@@ -11,7 +11,7 @@
 export interface TransactionCategory {
   name: string;
   items: { id: string; amount: number }[];
-  metadata: { currency: string; region: string } | null;
+  metadata: { currency: string; region: string };
 }
 
 const mockTransactionData: TransactionCategory[] = [
@@ -38,7 +38,7 @@ const mockTransactionData: TransactionCategory[] = [
       { id: "txn-020", amount: -29.99 },
       { id: "txn-021", amount: -5.00 },
     ],
-    metadata: null,   // ← BUG: missing metadata for refunds
+    metadata: { currency: "USD", region: "US" },   // ← FIX: added missing metadata
   },
 ];
 

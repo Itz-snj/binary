@@ -784,5 +784,35 @@ CREATE TABLE qa_reports (
 To enforce the pre-merge gate, enable **"Require status checks to pass"** in GitHub Branch Rules and add **`SlothOps QA`** as a required check.
 
 ---
+
+## PHASE 7: PRODUCTION AUTO-ROLLBACK & RESOLUTION ✅ COMPLETED
+
+### Overview
+If a bug merges to `main` and breaks the production build (e.g. Vercel deployment fails), SlothOps catches the GitHub `deployment_status` webhook and rescues production automatically. It then tries to fix the failed branch using the LLM and creates an Auto-Fix PR.
+
+### The Flow
+1. **Detection:** GitHub sends a `deployment_status` webhook with `state: failure` on the `main` branch.
+2. **Rollback (`rollback.py`):**
+   - SlothOps clones the repo in a sandbox.
+   - Creates a backup branch `slothops/backup-<sha>`.
+   - Runs `git revert <sha>` on `main` to undo the broken commit gracefully.
+   - Pushes the reverted `main` back to GitHub, restoring production.
+   - **Loop Prevention:** If the failing commit's message starts with `"Revert"`, SlothOps aborts the rollback to prevent infinite revert loops.
+3. **Resolution (`resolution.py`):**
+   - After rollback, SlothOps triggers `attempt_resolution()` asynchronously.
+   - It fetches the broken code from the `slothops/backup-<sha>` branch.
+   - LLM analyzes the deployment failure logs and code to generate a fix.
+   - The fix is committed to `slothops/backup-<sha>`.
+   - A new Draft PR is opened targeting `main`.
+4. **Re-Cycle (Self-Healing):**
+   - If the Vercel build for the Auto-Fix PR fails *again*, SlothOps catches the new `deployment_status` failure strictly for that `slothops/backup-*` branch.
+   - It re-triggers `attempt_resolution()` recursively (up to 3 max attempts) to try fixing its own mistakes.
+
+### New API & DB
+- Database: `rollbacks` and `resolutions` tables with lifecycle tracking.
+- Endpoints: `GET /api/rollbacks` for the frontend to render rollback cards with nested resolution attempts.
+- SSE: `rollback_event` and `resolution_event` for live UI updates.
+
+---
 ## END OF AI CONTEXT
 

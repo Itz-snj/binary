@@ -46,6 +46,21 @@ class DedupeAction(str, enum.Enum):
     SKIP = "SKIP"
     RETRIGGER = "RETRIGGER"
 
+class RollbackStatus(str, enum.Enum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+class ResolutionStatus(str, enum.Enum):
+    PENDING = "pending"
+    FIX_PUSHED = "fix_pushed"
+    PR_OPENED = "pr_opened"
+    BUILD_PASSED = "build_passed"
+    BUILD_FAILED = "build_failed"
+    ABANDONED = "abandoned"
+
+
+
 
 # ── Call Chain Models ───────────────────────────────────────────────────
 
@@ -83,6 +98,38 @@ class IssueRecord(BaseModel):
     call_chain: list[CallFrame] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class RollbackRecord(BaseModel):
+    """Record of a production rollback."""
+    id: str
+    workspace_id: str
+    repo_name: str
+    failed_commit_sha: str
+    rolled_back_to_sha: Optional[str] = None
+    backup_branch: Optional[str] = None
+    pr_number: Optional[int] = None
+    pr_url: Optional[str] = None
+    failure_reason: str = ""
+    status: str = RollbackStatus.PENDING.value
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class ResolutionRecord(BaseModel):
+    """Record of an auto-resolution attempt following a rollback."""
+    id: str
+    rollback_id: str
+    workspace_id: str
+    repo_name: str
+    backup_branch: str
+    resolution_pr_url: Optional[str] = None
+    resolution_pr_number: Optional[int] = None
+    attempt_number: int = 1
+    build_error_log: str = ""
+    status: str = ResolutionStatus.PENDING.value
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 
 
 # ── SaaS Multi-Tenant Models ──────────────────────────────────────────────────
