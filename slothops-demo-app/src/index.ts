@@ -44,6 +44,7 @@ app.use("/analytics", analyticsRouter);
 app.use("/settings", settingsRouter);
 
 app.get("/health", (req, res) => {
+  console.log("Health check pinged");
   res.json({ status: "ok" });
 });
 

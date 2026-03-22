@@ -267,7 +267,7 @@ async def run_qa_pipeline(
             if report.regression: summary_parts.append(f"**Regression:** {report.regression.get('summary', 'Done')}")
             if report.performance: summary_parts.append(f"**Performance:** {report.performance.get('summary', 'Done')}")
             
-            summary_text = "\\n".join(summary_parts) + f"\\n\\n**Orchestrator Note:** {langchain_summary}"
+            summary_text = "\n".join(summary_parts) + f"\n\n**Orchestrator Note:** {langchain_summary}"
             
             # --- LLM Fix Suggestion ---
             if final_status in [QAStatus.FAILED.value, QAStatus.WARNING.value]:
@@ -275,29 +275,29 @@ async def run_qa_pipeline(
                 try:
                     error_context = ""
                     if report.static_analysis and report.static_analysis.get("issues"):
-                        error_context += f"Static Analysis Issues: {report.static_analysis['issues']}\\n"
+                        error_context += f"Static Analysis Issues: {report.static_analysis['issues']}\n"
                     if report.functionality and report.functionality.get("failures"):
-                        error_context += f"Functionality Test Failures: {report.functionality['failures']}\\n"
+                        error_context += f"Functionality Test Failures: {report.functionality['failures']}\n"
                     if report.vapt and report.vapt.get("status") != "passed":
-                        error_context += f"VAPT Logs: {report.vapt.get('logs', report.vapt.get('summary'))}\\n"
+                        error_context += f"VAPT Logs: {report.vapt.get('logs', report.vapt.get('summary'))}\n"
                     if report.stress_test and report.stress_test.get("status") != "passed":
-                        error_context += f"Stress Test Logs: {report.stress_test.get('logs', report.stress_test.get('summary'))}\\n"
+                        error_context += f"Stress Test Logs: {report.stress_test.get('logs', report.stress_test.get('summary'))}\n"
                     if report.regression and report.regression.get("status") != "passed":
-                        error_context += f"Regression Logs: {report.regression.get('logs', report.regression.get('summary'))}\\n"
+                        error_context += f"Regression Logs: {report.regression.get('logs', report.regression.get('summary'))}\n"
                     if report.performance and report.performance.get("status") != "passed":
-                        error_context += f"Performance Logs: {report.performance.get('logs', report.performance.get('summary'))}\\n"
+                        error_context += f"Performance Logs: {report.performance.get('logs', report.performance.get('summary'))}\n"
 
                     fix_prompt = (
                         "The QA pipeline failed for the following reasons. "
                         "Please analyze the provided error logs and write a concise technical explanation of what went wrong. "
-                        "Then, provide code snippets or concrete recommendations to fix the issues.\\n\\n"
-                        f"Error Logs:\\n{error_context}"
+                        "Then, provide code snippets or concrete recommendations to fix the issues.\n\n"
+                        f"Error Logs:\n{error_context}"
                     )
                     fix_resp = client.models.generate_content(
                         model='gemini-2.5-pro',
                         contents=fix_prompt,
                     )
-                    summary_text += f"\\n\\n### 🤖 AI Auto-Fix Recommendation\\n\\n{fix_resp.text}\\n"
+                    summary_text += f"\n\n### 🤖 AI Auto-Fix Recommendation\n\n{fix_resp.text}\n"
                 except Exception as e:
                     logger.error("Failed to generate fix recommendation: %s", e)
             # --------------------------
