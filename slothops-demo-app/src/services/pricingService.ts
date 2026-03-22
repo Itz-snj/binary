@@ -7,7 +7,7 @@ export function calculateTotalWeight(cartItemIds: string[]): number {
     const itemDetails = getItemDetails(itemId);
     
     if (itemDetails) {
-      totalWeightInKg += itemDetails.weight.value;
+      totalWeightInKg += itemDetails.weight?.value ?? 0;
     }
   }
 
