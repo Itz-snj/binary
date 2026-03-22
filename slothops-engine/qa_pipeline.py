@@ -17,14 +17,8 @@ from qa_agents.regression import run_regression_tests
 from qa_agents.performance import run_performance_check
 from email_sender import send_qa_report_email
 from github_automation import post_qa_report_comment
-
-try:
-    from langchain_google_genai import ChatGoogleGenerativeAI
-    from langchain.agents import AgentExecutor, create_tool_calling_agent
-    from langchain_core.prompts import ChatPromptTemplate
-    from langchain_core.tools import StructuredTool
-except ImportError:
-    pass
+from google import genai
+import json
 
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
@@ -208,38 +202,46 @@ async def run_qa_pipeline(
             report.performance = res
             return res
 
-        tools = [
-            StructuredTool.from_function(coroutine=tool_static_analysis, name="StaticAnalysis", description="Run static analysis (linters, type checkers) on the repository to find syntax and style issues."),
-            StructuredTool.from_function(coroutine=tool_functionality, name="FunctionalityTesting", description="Generate and run targeted unit tests using an LLM for exactly the files changed in the PR."),
-            StructuredTool.from_function(coroutine=tool_vapt, name="VAPTScan", description="Run vulnerability assessment and dependency audit on the repository."),
-            StructuredTool.from_function(coroutine=tool_stress_test, name="StressTesting", description="Run load/stress tests by spawning the local server and throwing traffic at it."),
-            StructuredTool.from_function(coroutine=tool_regression, name="RegressionTesting", description="Run the repository's native existing test suite to ensure nothing is broken globally."),
-            StructuredTool.from_function(coroutine=tool_performance, name="PerformanceCheck", description="Measure basic performance and response time baselines for the server endpoints.")
-        ]
-
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", google_api_key=gemini_api_key, temperature=0)
-
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are the QA Orchestrator for SlothOps. "
-                       "Your job is to decide which QA agents (tools) to run for a given Pull Request. "
-                       "You must run at least StaticAnalysis and VAPTScan. "
-                       "If code files were changed, run FunctionalityTesting, RegressionTesting, and PerformanceCheck. "
-                       "If there are web endpoints or infrastructure involved, run StressTesting. "
-                       "Run the chosen tools to completion. Output a final string summarizing the overall results."),
-            ("human", "{input}"),
-            ("placeholder", "{agent_scratchpad}"),
-        ])
-
-        agent = create_tool_calling_agent(llm, tools, prompt)
-        agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
-
-        logger.info("🛠️ Running LangChain tools...")
+        logger.info("🛠️ Initializing Native GenAI Orchestrator...")
         try:
-            input_text = f"PR #{pr_number} in {repo_name} has changed {len(changed_paths)} files:\n{changed_paths}\n\nDetected tech stack: {stack_config.get('language')}/{stack_config.get('framework')}\nHas start_command: {bool(stack_config.get('start_command'))}\nHas test_command: {bool(stack_config.get('test_command'))}\n\nPlease run the appropriate QA tools."
-            orchestrator_result = await agent_executor.ainvoke({"input": input_text})
-            langchain_summary = orchestrator_result.get("output", "QA Orchestration completed.")
+            client = genai.Client(api_key=gemini_api_key)
+            system_msg = (
+                "You are the QA Orchestrator for SlothOps. Decide which QA tools to run.\n"
+                "Must run: StaticAnalysis, VAPTScan.\n"
+                "If code files changed: FunctionalityTesting, RegressionTesting, PerformanceCheck.\n"
+                "If web endpoints/infra involved: StressTesting.\n"
+                "Output ONLY a raw JSON array of strings representing the exact tool names to run.\n"
+                "Valid tools: [\"StaticAnalysis\", \"FunctionalityTesting\", \"VAPTScan\", \"StressTesting\", \"RegressionTesting\", \"PerformanceCheck\"]\n"
+                "Do not output markdown blocks or any other text."
+            )
+            user_msg = f"Changed {len(changed_paths)} files:\\n{changed_paths}\\nStack: {stack_config.get('language')}/{stack_config.get('framework')}\\nHas start_command: {bool(stack_config.get('start_command'))}\\nHas test_command: {bool(stack_config.get('test_command'))}"
+            
+            logger.info("🛠️ Asking LLM for QA Agent list...")
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=user_msg,
+                config=genai.types.GenerateContentConfig(
+                    system_instruction=system_msg,
+                    temperature=0.0
+                )
+            )
+            raw_text = response.text.replace("```json", "").replace("```", "").strip()
+            tool_names = json.loads(raw_text)
+            logger.info(f"🧠 LLM chose tools: {tool_names}")
+            
+            langchain_summary = "QA Orchestration completed. Tools run: " + ", ".join(tool_names)
+            
+            for t in tool_names:
+                if t == "StaticAnalysis": await tool_static_analysis()
+                elif t == "FunctionalityTesting": await tool_functionality()
+                elif t == "VAPTScan": await tool_vapt()
+                elif t == "StressTesting": await tool_stress_test()
+                elif t == "RegressionTesting": await tool_regression()
+                elif t == "PerformanceCheck": await tool_performance()
+                else: logger.warning(f"Unknown tool requested by LLM: {t}")
+                
         except Exception as e:
-            logger.error("LangChain Orchestrator failed: %s", e)
+            logger.error("Native Orchestrator failed: %s", e)
             langchain_summary = f"Orchestrator encountered an error while running tools: {e}"
 
         # Aggregate status across all sub-agents (some might not have run and remain None)
@@ -266,6 +268,39 @@ async def run_qa_pipeline(
             if report.performance: summary_parts.append(f"**Performance:** {report.performance.get('summary', 'Done')}")
             
             summary_text = "\\n".join(summary_parts) + f"\\n\\n**Orchestrator Note:** {langchain_summary}"
+            
+            # --- LLM Fix Suggestion ---
+            if final_status in [QAStatus.FAILED.value, QAStatus.WARNING.value]:
+                logger.info("QA failed. Asking LLM for a fix recommendation...")
+                try:
+                    error_context = ""
+                    if report.static_analysis and report.static_analysis.get("issues"):
+                        error_context += f"Static Analysis Issues: {report.static_analysis['issues']}\\n"
+                    if report.functionality and report.functionality.get("failures"):
+                        error_context += f"Functionality Test Failures: {report.functionality['failures']}\\n"
+                    if report.vapt and report.vapt.get("status") != "passed":
+                        error_context += f"VAPT Logs: {report.vapt.get('logs', report.vapt.get('summary'))}\\n"
+                    if report.stress_test and report.stress_test.get("status") != "passed":
+                        error_context += f"Stress Test Logs: {report.stress_test.get('logs', report.stress_test.get('summary'))}\\n"
+                    if report.regression and report.regression.get("status") != "passed":
+                        error_context += f"Regression Logs: {report.regression.get('logs', report.regression.get('summary'))}\\n"
+                    if report.performance and report.performance.get("status") != "passed":
+                        error_context += f"Performance Logs: {report.performance.get('logs', report.performance.get('summary'))}\\n"
+
+                    fix_prompt = (
+                        "The QA pipeline failed for the following reasons. "
+                        "Please analyze the provided error logs and write a concise technical explanation of what went wrong. "
+                        "Then, provide code snippets or concrete recommendations to fix the issues.\\n\\n"
+                        f"Error Logs:\\n{error_context}"
+                    )
+                    fix_resp = client.models.generate_content(
+                        model='gemini-2.5-pro',
+                        contents=fix_prompt,
+                    )
+                    summary_text += f"\\n\\n### 🤖 AI Auto-Fix Recommendation\\n\\n{fix_resp.text}\\n"
+                except Exception as e:
+                    logger.error("Failed to generate fix recommendation: %s", e)
+            # --------------------------
 
         report.overall_status = final_status
         report.summary = summary_text

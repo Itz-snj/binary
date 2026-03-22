@@ -34,7 +34,7 @@ async def run_static_analysis(repo_dir: str, changed_files: list[str], stack_con
             if res.returncode != 0:
                 status = "warning"
                 summary_lines.append(f"Type checker reported errors.")
-                issues.append({"tool": type_check_cmd.split()[0], "output": res.stdout[:500] + ("..." if len(res.stdout) > 500 else "")})
+                issues.append({"tool": type_check_cmd.split()[0], "output": res.stdout[:2000] + ("..." if len(res.stdout) > 2000 else "")})
             else:
                 summary_lines.append("Type checking passed.")
         except subprocess.TimeoutExpired:
@@ -56,7 +56,7 @@ async def run_static_analysis(repo_dir: str, changed_files: list[str], stack_con
                 status = "warning"
                 tool_name = lint_cmd.split()[0]
                 summary_lines.append(f"{tool_name} reported warnings or errors.")
-                issues.append({"tool": tool_name, "output": res.stdout[:500] + ("..." if len(res.stdout) > 500 else "")})
+                issues.append({"tool": tool_name, "output": res.stdout[:2000] + ("..." if len(res.stdout) > 2000 else "")})
             else:
                 tool_name = lint_cmd.split()[0]
                 summary_lines.append(f"{tool_name} passed.")

@@ -659,20 +659,130 @@ Scenario 7 — RECURRENCE (closed-loop demo):
 
 ---
 
-## PHASE 5: SAAS MULTI-TENANT INCUBATION (IN PROGRESS)
+## PHASE 5: SAAS MULTI-TENANT ✅ COMPLETED
 
-This phase upgrades the codebase to a multi-tenant platform.
+1. **Authentication:** Pure Python `bcrypt` + `PyJWT` implementation. Native frontend login/signup flows.
+2. **Multi-Tenant DB:** SQLite schemas (`workspaces`, `users`, `integrations`). All issues scoped by `workspace_id`.
+3. **GitHub App:** `@slothops-bot` fully integrated via `POST /webhook/github`. Dynamic repo targeting via `installation.get_repos()`.
 
-### ✅ Completed:
-1. **Authentication:** Pure Python `bcrypt` + `PyJWT` implementation. Native frontend login/signup flows serving as an authenticated dashboard.
-2. **Proper DB Setup:** Multi-tenant SQLite schemas established (`workspaces`, `users`, `integrations`). All issues are strictly scoped mathematically by `workspace_id`.
-3. **GitHub App Setup:** The `@slothops-bot` logic is fully integrated via `POST /webhook/github`. The `GITHUB_REPO` environment variable was ripped out. The engine dynamically queries PyGithub `installation.get_repos()` to dynamically target user repositories!
+---
 
-### ⏳ Upcoming Tasks (Tomorrow's Session):
-1. **Developer Setup:** User physically generates the `.pem` Private Key from github.com and configures the GitHub App webhook URL.
-2. **End-to-End Simulation:** Fire an error from the frontend, verify Sentry creates the `/webhook/sentry/{workspace_id}` payload, verify the App Token dynamically clones the correct repo, and opens the PR.
-3. **Migrate to PostgreSQL:** Swap `aiosqlite` for `asyncpg` (Supabase/Neon) for live production database persistence.
-4. **Live Verification:** Deploying `slothops-demo-app` strictly to Vercel, feeding Sentry events out to the internet, intercepted by `ngrok` running parallel to the SlothOps engine. 
+## PHASE 6: QA PIPELINE + TECH STACK DETECTION + PRE-MERGE GATE
+
+### Overview
+SlothOps now intercepts Pull Requests **before merge** and runs a full QA pipeline:
+- Static Analysis, Functionality Testing (LLM-generated), VAPT, Stress Testing, Regression, Performance
+- Sets a GitHub Commit Status (`SlothOps QA`) that **blocks the merge button** until QA passes
+- Automatically detects the repository's tech stack (or reads `.slothops.yml`)
+
+### QA Pipeline Flow
+```
+Developer opens PR → GitHub webhook fires (opened/synchronize)
+  → SlothOps receives webhook
+  → Sets commit status to PENDING ⏳
+  → Clones repo in temp sandbox
+  → detect_stack() identifies language/framework/commands
+  → Installs dependencies via detected install_command
+  → LangChain AgentExecutor picks which sub-agents to run:
+     ├─ StaticAnalysis    (ESLint, TSC, flake8, clippy, etc.)
+     ├─ FunctionalityTest (LLM generates + runs unit tests)
+     ├─ VAPTScan          (npm audit, pip-audit, cargo audit, govulncheck)
+     ├─ StressTesting     (autocannon load test)
+     ├─ RegressionTest    (run existing test suite)
+     └─ PerformanceCheck  (endpoint response time baseline)
+  → Aggregates results → Sets commit status:
+     SUCCESS ✅ = merge allowed
+     FAILURE ❌ = merge blocked
+  → Posts QA report as PR comment
+  → Sends email summary (if configured)
+
+Developer fixes code → Pushes → QA re-runs automatically
+OR → Developer clicks "Bypass" on SlothOps dashboard → Merge unblocked
+```
+
+### Tech Stack Detection (`stack_detector.py`)
+Auto-detects from repo marker files:
+
+| Marker File | Detected Stack |
+|---|---|
+| `package.json` + `tsconfig.json` | TypeScript/Node |
+| `package.json` (no TS) | JavaScript/Node |
+| `requirements.txt` + `manage.py` | Python/Django |
+| `requirements.txt` + Flask import | Python/Flask |
+| `requirements.txt` (generic) | Python |
+| `go.mod` | Go |
+| `pom.xml` | Java/Maven |
+| `build.gradle` | Java/Gradle |
+| `Cargo.toml` | Rust |
+
+**Optional override:** Place `.slothops.yml` at repo root:
+```yaml
+stack: node
+start: npm start
+test: npm test
+lint: npx eslint .
+port: 3000
+```
+
+### New QA Files
+```
+slothops-engine/
+├── qa_pipeline.py              # LangChain-orchestrated QA pipeline + commit status
+├── stack_detector.py           # Auto-detect tech stack + .slothops.yml merge
+├── email_sender.py             # HTML QA report email via SMTP
+├── qa_agents/
+│   ├── __init__.py
+│   ├── static_analysis.py      # Linters + type checkers per stack
+│   ├── functionality.py        # LLM-generated unit tests
+│   ├── vapt.py                 # Dependency vulnerability audit
+│   ├── stress_test.py          # autocannon load testing
+│   ├── regression.py           # Native test suite runner
+│   └── performance.py          # Response time baselines
+```
+
+### QA Pipeline API Endpoints
+| METHOD | PATH | Description |
+|---|---|---|
+| `POST` | `/webhook/github` | Receives PR events, triggers QA on `opened`/`synchronize` |
+| `GET` | `/api/qa-reports` | List QA reports for workspace |
+| `GET` | `/api/qa-reports/{id}` | Get single QA report |
+| `POST` | `/api/qa-bypass/{id}` | Bypass failed QA (sets commit status to success) |
+
+### Environment Variables (QA)
+| Variable | Purpose |
+|---|---|
+| `GEMINI_API_KEY` | Required for LLM-powered test generation |
+| `SMTP_HOST` | Optional, for email reports |
+| `SMTP_PORT` | Default: 587 |
+| `SMTP_USER` | SMTP login |
+| `SMTP_PASSWORD` | SMTP password |
+| `QA_EMAIL_RECIPIENT` | Who receives QA emails |
+
+### QA Database Schema
+```sql
+CREATE TABLE qa_reports (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    pr_number INTEGER,
+    pr_url TEXT,
+    commit_sha TEXT,
+    repo_name TEXT,
+    overall_status TEXT DEFAULT 'running',
+    summary TEXT,
+    static_analysis TEXT,
+    functionality TEXT,
+    vapt TEXT,
+    stress_test TEXT,
+    regression TEXT,
+    performance TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Branch Protection Setup
+To enforce the pre-merge gate, enable **"Require status checks to pass"** in GitHub Branch Rules and add **`SlothOps QA`** as a required check.
 
 ---
 ## END OF AI CONTEXT
+

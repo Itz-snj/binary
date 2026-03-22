@@ -321,6 +321,12 @@ def post_qa_report_comment(pr_url: str, qa_report: dict, repo, repo_name: str) -
             s_emoji = "✅" if static.get("status") == "passed" else ("⚠️" if static.get("status") == "warning" else "❌")
             body_lines.append(f"### {s_emoji} Static Analysis\n")
             body_lines.append(static.get("summary", "No details provided."))
+            issues = static.get("issues")
+            if issues:
+                body_lines.append("\n<details><summary><b>View detailed logs</b></summary>\n")
+                for issue in issues:
+                    body_lines.append(f"**{issue.get('tool', 'Tool')}**:\n```text\n{issue.get('output', '')}\n```\n")
+                body_lines.append("</details>")
             body_lines.append("")
             
         functionality = qa_report.get("functionality")
@@ -329,7 +335,7 @@ def post_qa_report_comment(pr_url: str, qa_report: dict, repo, repo_name: str) -
             body_lines.append(f"### {f_emoji} Functionality Testing\n")
             body_lines.append(functionality.get("summary", "No details provided."))
             if functionality.get("failures"):
-                body_lines.append("\n```text\n" + str(functionality.get("failures"))[:1000] + "\n```")
+                body_lines.append("\n<details><summary><b>View detailed logs</b></summary>\n\n```text\n" + str(functionality.get("failures"))[:2000] + "\n```\n\n</details>")
             body_lines.append("")
             
         vapt = qa_report.get("vapt")
@@ -337,6 +343,8 @@ def post_qa_report_comment(pr_url: str, qa_report: dict, repo, repo_name: str) -
             v_emoji = "✅" if vapt.get("status") == "passed" else ("⚠️" if vapt.get("status") == "warning" else "❌")
             body_lines.append(f"### {v_emoji} VAPT Scan\n")
             body_lines.append(vapt.get("summary", "No details provided."))
+            if vapt.get("logs"):
+                body_lines.append("\n<details><summary><b>View detailed logs</b></summary>\n\n```text\n" + str(vapt.get("logs"))[:2000] + "\n```\n\n</details>")
             body_lines.append("")
             
         stress = qa_report.get("stress_test")
@@ -344,6 +352,8 @@ def post_qa_report_comment(pr_url: str, qa_report: dict, repo, repo_name: str) -
             s_emoji = "✅" if stress.get("status") == "passed" else ("⚠️" if stress.get("status") == "warning" else "❌")
             body_lines.append(f"### {s_emoji} Stress Testing\n")
             body_lines.append(stress.get("summary", "No details provided."))
+            if stress.get("logs"):
+                body_lines.append("\n<details><summary><b>View detailed logs</b></summary>\n\n```text\n" + str(stress.get("logs"))[:2000] + "\n```\n\n</details>")
             body_lines.append("")
             
         regression = qa_report.get("regression")
@@ -351,6 +361,8 @@ def post_qa_report_comment(pr_url: str, qa_report: dict, repo, repo_name: str) -
             r_emoji = "✅" if regression.get("status") == "passed" else ("⚠️" if regression.get("status") == "warning" else "❌")
             body_lines.append(f"### {r_emoji} Regression Testing\n")
             body_lines.append(regression.get("summary", "No details provided."))
+            if regression.get("logs"):
+                body_lines.append("\n<details><summary><b>View detailed logs</b></summary>\n\n```text\n" + str(regression.get("logs"))[:2000] + "\n```\n\n</details>")
             body_lines.append("")
             
         performance = qa_report.get("performance")
@@ -358,6 +370,8 @@ def post_qa_report_comment(pr_url: str, qa_report: dict, repo, repo_name: str) -
             p_emoji = "✅" if performance.get("status") == "passed" else ("⚠️" if performance.get("status") == "warning" else "❌")
             body_lines.append(f"### {p_emoji} Performance Baseline\n")
             body_lines.append(performance.get("summary", "No details provided."))
+            if performance.get("logs"):
+                body_lines.append("\n<details><summary><b>View detailed logs</b></summary>\n\n```text\n" + str(performance.get("logs"))[:2000] + "\n```\n\n</details>")
             body_lines.append("")
         
         pr.create_issue_comment("\n".join(body_lines))

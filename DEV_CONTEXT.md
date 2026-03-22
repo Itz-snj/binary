@@ -755,20 +755,61 @@ Backup plan if a critical component fails:
 
 ---
 
-## PHASE 5: SAAS UPGRADE (IN PROGRESS)
+## PHASE 5: SAAS UPGRADE ✅ COMPLETED
 
-The team has transitioned from Local Hackathon MVP to a SaaS Platform!
+1. **Auth + Dashboard:** Signup/Login with PyJWT. Workspace-scoped issue visibility.
+2. **Multi-Tenant DB:** Separate `workspaces`, `users`, `workspace_users` tables. Per-tenant Sentry webhook URLs.
+3. **GitHub App:** Dynamic repo targeting via `installation.get_repos()`. No hardcoded `GITHUB_REPO`.
 
-### ✅ What We've Built So Far:
-1. **Auth + UI Dashboard:** Built an integrated Signup/Login Flow natively inside `static/index.html`. Users can boot up unique "Workspaces", and the dashboard strictly scopes issue visibility via `PyJWT` Bearer tokens.
-2. **Multi-Tenant DB Architecture:** Upgraded SQLite to separate `workspaces`, `users`, and `workspace_users` tables. Sentry webhook URLs are uniquely formulated for every tenant (`/webhook/sentry/{workspace_id}`).
-3. **Decoupled GitHub Repository Targeting:** The hardcoded `GITHUB_REPO` environment variable is DEPRECATED. SlothOps intercepts GitHub App Installations on `POST /webhook/github` and saves the `installation_id`. During a pipeline run, it uses `PyGithub` to dynamically query `installation.get_repos()` and infer the exact target repository automatically!
+---
 
-### ⏳ Tomorrow's Development Goals:
-1. **Live GitHub App Installation:** The developer must configure the App Webhook on GitHub, generate the `.pem` Private Key, add it to `.env`, and click "Install" on their target repository.
-2. **Sentry Redirection:** Copy the custom Workspace Webhook URL from the new SlothOps Dashboard and paste it into the Sentry project settings.
-3. **The End-to-End Run:** Trigger a real bug on the frontend. Ensure the Sentry Payload routes securely to the correct Workspace, generates a short-lived GitHub App Token, fetches the dynamic repository, fixes the code, and creates the PR successfully!
-4. **Postgres Migration:** Dump SQLite for a production `asyncpg` PostgreSQL database (like Neon or Supabase).
+## PHASE 6: QA PIPELINE + PRE-MERGE GATE
+
+### What It Does
+When a developer opens a PR (or pushes to an existing one), SlothOps automatically:
+1. Sets a **"SlothOps QA"** commit status to PENDING ⏳
+2. Clones the repo, auto-detects the tech stack
+3. Runs 6 QA agents via LangChain orchestration
+4. Sets commit status to SUCCESS ✅ or FAILURE ❌
+5. With Branch Protection enabled, the **merge button is blocked** until QA passes
+
+### New Files to Know
+| File | What It Does |
+|---|---|
+| `qa_pipeline.py` | LangChain orchestrator + commit status calls |
+| `stack_detector.py` | Auto-detect language/framework + `.slothops.yml` merge |
+| `email_sender.py` | Send QA report HTML emails |
+| `qa_agents/static_analysis.py` | Linters + type checkers |
+| `qa_agents/functionality.py` | LLM-generated unit tests |
+| `qa_agents/vapt.py` | Dependency audit (npm audit, pip-audit, etc.) |
+| `qa_agents/stress_test.py` | autocannon load testing |
+| `qa_agents/regression.py` | Run existing test suite |
+| `qa_agents/performance.py` | Response time baselines |
+
+### How to Test
+1. Start engine: `uvicorn main:app --reload --port 8000`
+2. Expose via ngrok: `ngrok http 8000`
+3. Open a PR on any connected repo
+4. Watch logs for `Starting QA Pipeline...`
+5. Check the PR — "SlothOps QA" check should appear
+
+### Bypass Flow
+If QA fails but the developer knows it's safe:
+1. Go to SlothOps Dashboard → QA tab
+2. Click "Bypass" on the failing report
+3. Enter a reason → commit status changes to SUCCESS → merge unblocked
+
+### Stack Detection
+The engine auto-detects Node/TS, Python/Django/Flask, Go, Java, Rust from marker files.
+Users can optionally add `.slothops.yml` at repo root to override defaults.
+
+### Key Dependencies Added
+```
+langchain
+langchain-google-genai
+langchain-core
+PyYAML (optional, for .slothops.yml)
+```
 
 ---
 ## END OF DEVELOPER CONTEXT

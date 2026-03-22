@@ -15,6 +15,7 @@ async def run_regression_tests(repo_dir: str, stack_config: dict = None) -> dict
     logger.info("Starting Regression Testing...")
     status = "passed"
     summary_lines = []
+    logs = ""
     
     test_command = stack_config.get("test_command")
     language = stack_config.get("language", "unknown")
@@ -39,6 +40,7 @@ async def run_regression_tests(repo_dir: str, stack_config: dict = None) -> dict
         else:
             status = "failed"
             summary_lines.append(f"Regression tests failed (exit code {res.returncode}).")
+            logs = (res.stdout + "\\n" + res.stderr)[:4000]
     except subprocess.TimeoutExpired:
         logger.warning("Regression test suite timed out.")
         status = "warning"
@@ -50,5 +52,6 @@ async def run_regression_tests(repo_dir: str, stack_config: dict = None) -> dict
         
     return {
         "status": status,
-        "summary": " ".join(summary_lines)
+        "summary": " ".join(summary_lines),
+        "logs": logs
     }
