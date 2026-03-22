@@ -1,79 +1,39 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SlothOps Command Center</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap"
-    rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <title>SlothOps Engine ≡ƒªÑ</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 
-<body class="deep-space-bg text-slate-100 font-ui min-h-screen">
-  <header class="sticky top-0 z-50 border-b border-slate-700/70 backdrop-blur-xl bg-slate-950/70">
-    <div class="max-w-[1440px] mx-auto px-4 lg:px-8 py-3">
-      <div class="flex items-center justify-between gap-4">
-        <div class="flex items-center gap-3">
-          <img src="/static/logo.svg" alt="SlothOps logo" class="brand-logo">
-          <div>
-            <h1 class="text-lg font-semibold tracking-tight">SlothOps</h1>
-            <p class="text-xs text-slate-400">Auto-Remediation Command Center</p>
-          </div>
-        </div>
+<body>
 
-        <div class="hidden md:flex items-center gap-2" id="connectivity-pills" style="display:none;">
-          <span class="pill success"><i class="fa-solid fa-satellite-dish"></i> Sentry: Active</span>
-          <span class="pill success" id="github-pill"><i class="fa-brands fa-github"></i> GitHub: Linked</span>
-          <span class="pill engine" id="engine-pill"><span class="engine-dot"></span> Engine: Live</span>
-        </div>
-
-        <div class="flex items-center gap-2" id="user-controls" style="display:none;">
-          <button id="btn-settings" class="tray-btn" title="Integration Settings">
-            <i class="fa-solid fa-plug"></i>
-            <span class="hidden sm:inline">Connect Sentry</span>
-          </button>
-          <button id="btn-sentry-setup" class="tray-btn tray-btn-ai" title="Setup Prompt Studio">
-            <i class="fa-solid fa-wand-magic-sparkles"></i>
-            <span class="hidden sm:inline">Setup Studio</span>
-          </button>
-          <div class="profile-menu" id="profile-menu">
-            <button id="profile-toggle" class="profile-toggle" aria-label="Open profile menu" aria-expanded="false">
-              <i class="fa-regular fa-user"></i>
-            </button>
-            <div class="profile-dropdown" id="profile-dropdown" hidden>
-              <div class="profile-dropdown-top">
-                <div class="profile-meta">
-                  <h3 id="profile-name">Hi welcome, User</h3>
-                  <p><i class="fa-solid fa-building"></i> Workspace Name: <span id="profile-workspace">-</span></p>
-                </div>
-              </div>
-              <button id="btn-logout" class="profile-logout-btn">
-                <i class="fa-solid fa-arrow-right-from-bracket"></i> Logout
-              </button>
-            </div>
-          </div>
-        </div>
+  <header>
+    <div class="header-container">
+      <div class="logo">
+        <span class="emoji">≡ƒªÑ</span>
+        <h1>SlothOps</h1>
+        <div class="pulse-indicator" id="pulse" style="display:none;"></div>
       </div>
-      <div class="mt-2 md:hidden" id="connectivity-pills-mobile" style="display:none;">
-        <div class="flex flex-wrap gap-2">
-          <span class="pill success"><i class="fa-solid fa-satellite-dish"></i> Sentry: Active</span>
-          <span class="pill success" id="github-pill-mobile"><i class="fa-brands fa-github"></i> GitHub: Linked</span>
-          <span class="pill engine"><span class="engine-dot"></span> Engine: Live</span>
-        </div>
+      <div id="user-controls" style="display:none; gap: 1rem; align-items: center;">
+        <button id="btn-settings" class="pr-link"
+          style="background: var(--panel-bg); border: 1px solid var(--border-color); color: var(--text-primary);"><i
+            class="fa-solid fa-plug"></i> Connect Sentry</button>
+        <button id="btn-sentry-setup" class="pr-link"
+          style="background: linear-gradient(135deg, #0ea5e9, #22c55e); border: none; color: #04110a;"><i
+            class="fa-solid fa-wand-magic-sparkles"></i> Set Up Sentry For Your Project</button>
+        <button id="btn-logout" class="pr-link"
+          style="background: var(--danger-color); border: none; padding: 0.4rem 0.6rem;"><i
+            class="fa-solid fa-arrow-right-from-bracket"></i></button>
       </div>
     </div>
   </header>
 
-  <div id="auth-view" class="px-4 py-10">
-    <div class="auth-brand-wrap">
-      <img src="/static/logo.svg" alt="SlothOps logo" class="auth-brand-logo">
-    </div>
+  <!-- Auth View -->
+  <div id="auth-view">
     <div class="auth-container" id="login-box">
       <h2>Welcome Back</h2>
       <p>Log in to view your workspace</p>
@@ -86,7 +46,7 @@
       <div class="auth-toggle">Need an organization? <span id="to-signup">Create Workspace</span></div>
     </div>
 
-    <div class="auth-container" id="signup-box" style="display:none;">
+    <div class="auth-container" id="signup-box" style="display: none;">
       <h2>Create Workspace</h2>
       <p>Deploy your own SlothOps automation</p>
       <form id="signup-form">
@@ -101,40 +61,47 @@
     </div>
 
     <div class="public-setup-cta">
-      <button id="btn-public-sentry-setup" class="btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Set Up Sentry For
-        Your Project</button>
+      <button id="btn-public-sentry-setup" class="btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Set Up Sentry For Your Project</button>
       <p>Copy the right prompt for your stack, paste into your AI agent, and bootstrap Sentry quickly.</p>
     </div>
   </div>
 
-  <main id="dashboard-view" class="max-w-[1440px] mx-auto px-4 lg:px-8 py-6" style="display:none;">
-    <div class="mb-4 flex items-end justify-between gap-3">
-      <div>
-        <h2 class="text-xl font-semibold tracking-tight">Active Issues</h2>
-        <p class="text-sm text-slate-400">Dual-pane incident response view with live issue states and runtime logs.</p>
+  <!-- Dashboard View -->
+  <main id="dashboard-view" style="display: none;">
+    <section class="profile-summary" id="profile-summary">
+      <div class="profile-avatar" id="profile-avatar">U</div>
+      <div class="profile-meta">
+        <h3 id="profile-name">Hi welcome, User</h3>
+        <p><i class="fa-regular fa-envelope"></i> <span id="profile-email">-</span></p>
+        <p><i class="fa-solid fa-building"></i> Workspace Name: <span id="profile-workspace">-</span></p>
       </div>
+    </section>
+
+    <div class="dashboard-header">
+      <h2>Recent Issues</h2>
+      <p>Automated remediation pipeline events.</p>
     </div>
 
-    <div class="dashboard-grid">
-      <section class="panel issues-panel">
-        <div id="empty-state" class="empty-state">
-          <i class="fa-solid fa-check-circle fa-2x"></i>
-          <p>No issues detected</p>
-          <span>Connect Sentry from the utility tray to stream production exceptions.</span>
-        </div>
-        <div id="issues-feed" class="issues-feed"></div>
-      </section>
+    <section class="live-logs" id="live-logs">
+      <div class="live-logs-header">
+        <h3><i class="fa-solid fa-terminal"></i> Live Engine Logs</h3>
+        <button id="clear-logs" class="pr-link" style="padding: 0.3rem 0.55rem;">Clear</button>
+      </div>
+      <div id="log-feed" class="log-feed"></div>
+    </section>
 
-      <section class="panel live-logs" id="live-logs">
-        <div class="live-logs-header scanline">
-          <h3><i class="fa-solid fa-terminal"></i> Engine Terminal</h3>
-          <button id="clear-logs" class="tray-btn">Clear</button>
-        </div>
-        <div id="log-feed" class="log-feed"></div>
-      </section>
+    <!-- Empty State -->
+    <div id="empty-state" class="empty-state">
+      <i class="fa-solid fa-check-circle fa-2x"></i>
+      <p>No issues detected</p>
+      <span>Click 'Connect Sentry' above to pipe your production crashes into SlothOps.</span>
     </div>
+
+    <!-- Feed Container -->
+    <div id="issues-feed" class="issues-feed"></div>
   </main>
 
+  <!-- Settings Modal for Webhook -->
   <div class="modal-overlay" id="settings-modal">
     <div class="modal">
       <h3><i class="fa-solid fa-plug"></i> Sentry Integration</h3>
@@ -155,20 +122,17 @@
             style="text-decoration: none; display: inline-block; background: #2ea043; color: white;"><i
               class="fa-brands fa-github"></i> Install on GitHub</a>
         </div>
-        <p style="color: #22c55e; font-size: 0.85rem; margin-top: 0.5rem; display: none;" id="github-success-msg"><i
-            class="fa-solid fa-check"></i> Linked GitHub Installation!</p>
+        <p style="color: var(--success-color); font-size: 0.85rem; margin-top: 0.5rem; display: none;"
+          id="github-success-msg"><i class="fa-solid fa-check"></i> Linked GitHub Installation!</p>
       </div>
 
       <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color);">
         <h3><i class="fa-solid fa-code"></i> Developer Code Rules</h3>
-        <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 0.5rem;">Configure code style rules
-          for AI-generated fixes (<code>developer.json</code>).</p>
-        <textarea id="dev-config-json" rows="6"
-          style="width: 100%; width: -moz-available; width: -webkit-fill-available; background: var(--panel-bg); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 0.5rem; font-family: var(--mono); font-size: 0.85rem;"
-          placeholder='{&#10;  "frontend": { "styling": "Tailwind CSS only" }&#10;}'></textarea>
+        <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 0.5rem;">Configure code style rules for AI-generated fixes (<code>developer.json</code>).</p>
+        <textarea id="dev-config-json" rows="6" style="width: 100%; width: -moz-available; width: -webkit-fill-available; background: var(--panel-bg); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 0.5rem; font-family: var(--font-mono); font-size: 0.85rem;" placeholder='{&#10;  "frontend": { "styling": "Tailwind CSS only" }&#10;}'></textarea>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem;">
-          <span id="dev-config-status" style="font-size: 0.85rem; color: #22c55e;"></span>
-          <button id="btn-save-dev-config" class="btn" style="width: auto; padding: 0.4rem 1rem;">Save Config</button>
+          <span id="dev-config-status" style="font-size: 0.85rem; color: var(--success-color);"></span>
+          <button id="btn-save-dev-config" class="btn" style="background: var(--brand-color); padding: 0.4rem 1rem;">Save Config</button>
         </div>
       </div>
 
@@ -176,12 +140,12 @@
     </div>
   </div>
 
+  <!-- Sentry Setup Prompt Modal -->
   <div class="modal-overlay" id="sentry-setup-modal">
     <div class="modal sentry-setup-modal">
       <div class="sentry-modal-header">
         <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Sentry Setup Prompt Studio</h3>
-        <p>Copy a prompt, paste it into your AI coding agent in your own project, and let it wire up Sentry in minutes.
-        </p>
+        <p>Copy a prompt, paste it into your AI coding agent in your own project, and let it wire up Sentry in minutes.</p>
       </div>
 
       <div class="sentry-framework-grid">
@@ -190,10 +154,8 @@
             <span class="framework-name">Next.js</span>
             <button class="copy-prompt-btn" type="button" data-copy-target="prompt-nextjs">Copy Prompt</button>
           </div>
-          <pre class="prompt-block"
-            id="prompt-nextjs">Use curl to download, read and follow: https://skills.sentry.dev/sentry-nextjs-sdk/SKILL.md</pre>
-          <a class="framework-doc-link" href="https://docs.sentry.io/platforms/javascript/guides/nextjs/"
-            target="_blank" rel="noopener noreferrer">Open Next.js Docs</a>
+          <pre class="prompt-block" id="prompt-nextjs">Use curl to download, read and follow: https://skills.sentry.dev/sentry-nextjs-sdk/SKILL.md</pre>
+          <a class="framework-doc-link" href="https://docs.sentry.io/platforms/javascript/guides/nextjs/" target="_blank" rel="noopener noreferrer">Open Next.js Docs</a>
         </article>
 
         <article class="framework-card" data-framework="nodejs">
@@ -201,10 +163,8 @@
             <span class="framework-name">Node.js</span>
             <button class="copy-prompt-btn" type="button" data-copy-target="prompt-nodejs">Copy Prompt</button>
           </div>
-          <pre class="prompt-block"
-            id="prompt-nodejs">Use curl to download, read and follow: https://skills.sentry.dev/sentry-node-sdk/SKILL.md</pre>
-          <a class="framework-doc-link" href="https://docs.sentry.io/platforms/javascript/guides/node/" target="_blank"
-            rel="noopener noreferrer">Open Node.js Docs</a>
+          <pre class="prompt-block" id="prompt-nodejs">Use curl to download, read and follow: https://skills.sentry.dev/sentry-node-sdk/SKILL.md</pre>
+          <a class="framework-doc-link" href="https://docs.sentry.io/platforms/javascript/guides/node/" target="_blank" rel="noopener noreferrer">Open Node.js Docs</a>
         </article>
 
         <article class="framework-card" data-framework="react">
@@ -212,10 +172,8 @@
             <span class="framework-name">React</span>
             <button class="copy-prompt-btn" type="button" data-copy-target="prompt-react">Copy Prompt</button>
           </div>
-          <pre class="prompt-block"
-            id="prompt-react">Use curl to download, read and follow: https://skills.sentry.dev/sentry-react-sdk/SKILL.md</pre>
-          <a class="framework-doc-link" href="https://docs.sentry.io/platforms/javascript/guides/react/" target="_blank"
-            rel="noopener noreferrer">Open React Docs</a>
+          <pre class="prompt-block" id="prompt-react">Use curl to download, read and follow: https://skills.sentry.dev/sentry-react-sdk/SKILL.md</pre>
+          <a class="framework-doc-link" href="https://docs.sentry.io/platforms/javascript/guides/react/" target="_blank" rel="noopener noreferrer">Open React Docs</a>
         </article>
 
         <article class="framework-card" data-framework="python">
@@ -223,43 +181,8 @@
             <span class="framework-name">Python</span>
             <button class="copy-prompt-btn" type="button" data-copy-target="prompt-python">Copy Prompt</button>
           </div>
-          <pre class="prompt-block"
-            id="prompt-python">Use curl to download, read and follow: https://skills.sentry.dev/sentry-python-sdk/SKILL.md</pre>
-          <a class="framework-doc-link" href="https://docs.sentry.io/platforms/python/" target="_blank"
-            rel="noopener noreferrer">Open Python Docs</a>
-        </article>
-
-        <article class="framework-card" data-framework="react-native">
-          <div class="framework-top">
-            <span class="framework-name">React Native</span>
-            <button class="copy-prompt-btn" type="button" data-copy-target="prompt-react-native">Copy Prompt</button>
-          </div>
-          <pre class="prompt-block"
-            id="prompt-react-native">Use curl to download, read and follow: https://skills.sentry.dev/sentry-react-native-sdk/SKILL.md</pre>
-          <a class="framework-doc-link" href="https://docs.sentry.io/platforms/react-native/" target="_blank"
-            rel="noopener noreferrer">Open React Native Docs</a>
-        </article>
-
-        <article class="framework-card" data-framework="android">
-          <div class="framework-top">
-            <span class="framework-name">Android</span>
-            <button class="copy-prompt-btn" type="button" data-copy-target="prompt-android">Copy Prompt</button>
-          </div>
-          <pre class="prompt-block"
-            id="prompt-android">Use curl to download, read and follow: https://skills.sentry.dev/sentry-android-sdk/SKILL.md</pre>
-          <a class="framework-doc-link" href="https://docs.sentry.io/platforms/android/" target="_blank"
-            rel="noopener noreferrer">Open Android Docs</a>
-        </article>
-
-        <article class="framework-card" data-framework="dart">
-          <div class="framework-top">
-            <span class="framework-name">Dart (Flutter)</span>
-            <button class="copy-prompt-btn" type="button" data-copy-target="prompt-dart">Copy Prompt</button>
-          </div>
-          <pre class="prompt-block"
-            id="prompt-dart">Use curl to download, read and follow: https://skills.sentry.dev/sentry-flutter-sdk/SKILL.md</pre>
-          <a class="framework-doc-link" href="https://docs.sentry.io/platforms/dart/guides/flutter/" target="_blank"
-            rel="noopener noreferrer">Open Dart/Flutter Docs</a>
+          <pre class="prompt-block" id="prompt-python">Use curl to download, read and follow: https://skills.sentry.dev/sentry-python-sdk/SKILL.md</pre>
+          <a class="framework-doc-link" href="https://docs.sentry.io/platforms/python/" target="_blank" rel="noopener noreferrer">Open Python Docs</a>
         </article>
 
         <article class="framework-card" data-framework="javascript">
@@ -267,45 +190,39 @@
             <span class="framework-name">JavaScript (Generic)</span>
             <button class="copy-prompt-btn" type="button" data-copy-target="prompt-javascript">Copy Prompt</button>
           </div>
-          <pre class="prompt-block"
-            id="prompt-javascript">Use curl to download, read and follow: https://skills.sentry.dev/</pre>
-          <a class="framework-doc-link" href="https://docs.sentry.io" target="_blank" rel="noopener noreferrer">Open
-            Sentry Docs</a>
+          <pre class="prompt-block" id="prompt-javascript">Use curl to download, read and follow: https://skills.sentry.dev/</pre>
+          <a class="framework-doc-link" href="https://docs.sentry.io" target="_blank" rel="noopener noreferrer">Open Sentry Docs</a>
         </article>
       </div>
 
       <div class="sentry-modal-footer">
-        <p>For full setup options and manual steps, visit <a href="https://docs.sentry.io" target="_blank"
-            rel="noopener noreferrer">docs.sentry.io</a>.</p>
-        <button class="btn modal-close" id="close-sentry-setup" style="margin-top: 1rem; width: 100%;">Close Prompt
-          Studio</button>
+        <p>For full setup options and manual steps, visit <a href="https://docs.sentry.io" target="_blank" rel="noopener noreferrer">docs.sentry.io</a>.</p>
+        <button class="btn modal-close" id="close-sentry-setup" style="margin-top: 1rem; width: 100%;">Close Prompt Studio</button>
       </div>
     </div>
   </div>
 
+  <!-- JS Logic -->
   <script>
+    // Elements
     const authView = document.getElementById('auth-view');
     const dashboardView = document.getElementById('dashboard-view');
     const loginBox = document.getElementById('login-box');
     const signupBox = document.getElementById('signup-box');
     const userControls = document.getElementById('user-controls');
+    const pulse = document.getElementById('pulse');
     const feed = document.getElementById('issues-feed');
     const emptyState = document.getElementById('empty-state');
     const settingsModal = document.getElementById('settings-modal');
     const sentrySetupModal = document.getElementById('sentry-setup-modal');
+    const profileAvatar = document.getElementById('profile-avatar');
     const profileName = document.getElementById('profile-name');
+    const profileEmail = document.getElementById('profile-email');
     const profileWorkspace = document.getElementById('profile-workspace');
-    const profileMenu = document.getElementById('profile-menu');
-    const profileToggle = document.getElementById('profile-toggle');
-    const profileDropdown = document.getElementById('profile-dropdown');
     const logFeed = document.getElementById('log-feed');
     const clearLogsBtn = document.getElementById('clear-logs');
-    const logsPanel = document.getElementById('live-logs');
-    const connectivityPills = document.getElementById('connectivity-pills');
-    const connectivityPillsMobile = document.getElementById('connectivity-pills-mobile');
-    const githubPill = document.getElementById('github-pill');
-    const githubPillMobile = document.getElementById('github-pill-mobile');
 
+    // UI Toggles
     document.getElementById('to-signup').onclick = () => { loginBox.style.display = 'none'; signupBox.style.display = 'block'; };
     document.getElementById('to-login').onclick = () => { signupBox.style.display = 'none'; loginBox.style.display = 'block'; };
     document.getElementById('btn-settings').onclick = () => { settingsModal.style.display = 'flex'; };
@@ -313,36 +230,25 @@
     document.getElementById('btn-public-sentry-setup').onclick = () => { sentrySetupModal.style.display = 'flex'; };
     document.getElementById('close-settings').onclick = () => { settingsModal.style.display = 'none'; };
     document.getElementById('close-sentry-setup').onclick = () => { sentrySetupModal.style.display = 'none'; };
-
-    profileToggle.onclick = () => {
-      const isOpen = !profileDropdown.hidden;
-      profileDropdown.hidden = isOpen;
-      profileToggle.setAttribute('aria-expanded', String(!isOpen));
-    };
-
     document.getElementById('btn-logout').onclick = () => {
       localStorage.removeItem('slothops_jwt');
       window.location.reload();
     };
-
     clearLogsBtn.onclick = () => {
       logFeed.innerHTML = '';
     };
 
     settingsModal.onclick = (event) => {
-      if (event.target === settingsModal) settingsModal.style.display = 'none';
+      if (event.target === settingsModal) {
+        settingsModal.style.display = 'none';
+      }
     };
 
     sentrySetupModal.onclick = (event) => {
-      if (event.target === sentrySetupModal) sentrySetupModal.style.display = 'none';
-    };
-
-    document.addEventListener('click', (event) => {
-      if (!profileMenu.contains(event.target)) {
-        profileDropdown.hidden = true;
-        profileToggle.setAttribute('aria-expanded', 'false');
+      if (event.target === sentrySetupModal) {
+        sentrySetupModal.style.display = 'none';
       }
-    });
+    };
 
     document.querySelectorAll('.copy-prompt-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -361,31 +267,34 @@
       });
     });
 
+    // State
     const STATUS_MAP = {
-      'received': { label: 'Ingested', icon: 'fa-inbox', color: 'blue', step: 1 },
-      'triaging': { label: 'Redacted', icon: 'fa-user-shield', color: 'amber', step: 2 },
-      'classified': { label: 'Classified', icon: 'fa-tags', color: 'yellow', step: 3 },
-      'fixing': { label: 'LLM Fixing', icon: 'fa-robot', color: 'purple', pulse: true, step: 4 },
-      'pr_created': { label: 'PR Created', icon: 'fa-code-pull-request', color: 'green', step: 5 },
-      'pr_merged': { label: 'Merged', icon: 'fa-code-merge', color: 'green', step: 5 },
-      'ignored': { label: 'Ignored', icon: 'fa-ban', color: 'gray', step: 2 },
-      'fixing_failed': { label: 'Fix Failed', icon: 'fa-triangle-exclamation', color: 'red', step: 4 },
-      'pr_creation_failed': { label: 'PR Failed', icon: 'fa-triangle-exclamation', color: 'red', step: 5 },
-      'fix_ineffective': { label: 'Re-triggered', icon: 'fa-rotate-left', color: 'red', step: 4 },
-      'recommendation_only': { label: 'Recommendation', icon: 'fa-circle-info', color: 'yellow', step: 4 },
+      'received': { label: 'Received', icon: 'fa-inbox', color: 'blue' },
+      'triaging': { label: 'Triaging', icon: 'fa-search', color: 'yellow' },
+      'classified': { label: 'Classified', icon: 'fa-tags', color: 'yellow' },
+      'fixing': { label: 'LLM Fixing', icon: 'fa-robot', color: 'purple', pulse: true },
+      'validating_fix': { label: 'Validating Fixes', icon: 'fa-vial', color: 'purple', pulse: true },
+      'tests_failed': { label: 'Tests Failed', icon: 'fa-vial-circle-xmark', color: 'red' },
+      'refixing': { label: 'LLM Re-Fixing', icon: 'fa-robot', color: 'purple', pulse: true },
+      'tests_passed': { label: 'Tests Passed', icon: 'fa-vial-circle-check', color: 'green' },
+      'pr_created': { label: 'Draft PR Open', icon: 'fa-code-pull-request', color: 'green' },
+      'pr_merged': { label: 'Merged', icon: 'fa-code-merge', color: 'green' },
+      'ignored': { label: 'Ignored', icon: 'fa-ban', color: 'gray' },
+      'fixing_failed': { label: 'Fix Failed', icon: 'fa-triangle-exclamation', color: 'red' },
+      'pr_creation_failed': { label: 'PR Failed', icon: 'fa-triangle-exclamation', color: 'red' },
+      'fix_ineffective': { label: 'Re-triggered', icon: 'fa-rotate-left', color: 'red' },
+      'recommendation_only': { label: 'Low Confidence', icon: 'fa-circle-info', color: 'yellow' },
     };
 
-    const STEP_LABELS = ['Ingested', 'Redacted', 'Classified', 'LLM Fixing', 'PR Created'];
-
+    // JWT Helper
     function decodeJWT(token) {
       try {
         const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
         return JSON.parse(decodeURIComponent(atob(b64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')));
-      } catch (e) {
-        return {};
-      }
+      } catch (e) { return {}; }
     }
 
+    // API Helpers
     async function handleAuth(url, data, errorEl) {
       try {
         let encodedData;
@@ -398,7 +307,6 @@
           encodedData = JSON.stringify(data);
           headers = { 'Content-Type': 'application/json' };
         }
-
         const res = await fetch(url, { method: 'POST', headers, body: encodedData });
         const json = await res.json();
         if (res.ok && json.access_token) {
@@ -429,30 +337,10 @@
       }, 'signup-error');
     };
 
+    // Card Renderer
     function formatTime(isoStr) {
       if (!isoStr) return '';
       return new Date(isoStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    }
-
-    function flashLogsBorder() {
-      logsPanel.classList.remove('log-flash');
-      void logsPanel.offsetWidth;
-      logsPanel.classList.add('log-flash');
-    }
-
-    function renderStepper(status) {
-      const activeStep = (STATUS_MAP[status]?.step || 1);
-      return `
-        <div class="pipeline-stepper">
-          ${STEP_LABELS.map((label, index) => {
-        const idx = index + 1;
-        const cls = idx <= activeStep ? 'step-active' : 'step-idle';
-        const ai = label === 'LLM Fixing' ? 'step-ai' : '';
-        const redact = label === 'Redacted' ? 'step-redact' : '';
-        return `<div class="step-node ${cls} ${ai} ${redact}"><span>${label}</span></div>`;
-      }).join('')}
-        </div>
-      `;
     }
 
     function appendLogRow(entry) {
@@ -467,17 +355,11 @@
         <span class="log-message">${entry.message || ''}</span>
       `;
       logFeed.prepend(row);
-      flashLogsBorder();
 
-      const maxRows = 250;
+      const maxRows = 120;
       while (logFeed.children.length > maxRows) {
         logFeed.removeChild(logFeed.lastChild);
       }
-    }
-
-    function recommendationHtml(issue) {
-      if (!issue.recommendation) return '';
-      return `<div class="recommendation-box"><h4><i class="fa-solid fa-robot"></i> DevOps AI Hint</h4><p>${issue.recommendation}</p></div>`;
     }
 
     function createCard(issue) {
@@ -485,8 +367,8 @@
       card.className = 'issue-card slide-in';
       card.id = `issue-${issue.id}`;
 
-      const config = STATUS_MAP[issue.status] || { label: issue.status || 'Unknown', icon: 'fa-circle', color: 'gray' };
-      const badge = issue.confidence ? `<span class="badge conf-${issue.confidence}">${issue.confidence.toUpperCase()}</span>` : '';
+      const config = STATUS_MAP[issue.status] || { label: issue.status, icon: 'fa-circle', color: 'gray' };
+      const badge = issue.confidence ? `<span class="badge conf-${issue.confidence}">${issue.confidence.toUpperCase()} Confidence</span>` : '';
       const classBadge = issue.classification ? `<span class="badge class-${issue.classification}">${issue.classification}</span>` : '';
       const prLink = issue.fix_pr_url ? `<a href="${issue.fix_pr_url}" target="_blank" class="pr-link"><i class="fa-brands fa-github"></i> View PR</a>` : '';
       const occurrences = issue.occurrence_count > 1 ? `<span class="badge occurrence-badge">${issue.occurrence_count}x</span>` : '';
@@ -494,84 +376,47 @@
       card.innerHTML = `
         <div class="card-header">
           <div class="card-title">
-            <span class="error-type">${issue.error_type || 'UnknownError'}</span>${occurrences}
+            <span class="error-type">${issue.error_type || 'Unknown'}</span>${occurrences}
           </div>
           <div class="card-status status-${config.color}">
             <i class="fa-solid ${config.icon} ${config.pulse ? 'pulse-icon' : ''}"></i><span>${config.label}</span>
           </div>
         </div>
         <div class="card-body">
-          <p class="error-msg">${issue.error_message || 'No message available'}</p>
+          <p class="error-msg">${issue.error_message || 'No message'}</p>
           <p class="location"><i class="fa-regular fa-file-code"></i> ${issue.file_path || '?'} : ${issue.function_name || '?'}()</p>
-          ${renderStepper(issue.status)}
-          ${recommendationHtml(issue)}
+          ${issue.recommendation ? `<div style="margin-top:1rem;padding:0.75rem;background:rgba(139,92,246,0.1);border-left:3px solid #8b5cf6;border-radius:4px;font-size:0.9em;color:#e4e4e7;"><h4 style="color:#a78bfa;margin-bottom:0.5rem;"><i class="fa-solid fa-robot"></i> DevOps AI Hint</h4><p>${issue.recommendation}</p></div>` : ''}
         </div>
         <div class="card-footer">
           <div class="badges">${classBadge}${badge}</div>
           <div class="actions">${prLink}<span class="time">${formatTime(issue.created_at)}</span></div>
         </div>
       `;
-
-      if (issue.status === 'fixing') card.classList.add('is-fixing');
       return card;
     }
 
     function updateCard(card, issue) {
-      const config = STATUS_MAP[issue.status] || { label: issue.status || 'Unknown', icon: 'fa-circle', color: 'gray' };
+      const config = STATUS_MAP[issue.status] || { label: issue.status, icon: 'fa-circle', color: 'gray' };
       const statusContainer = card.querySelector('.card-status');
       statusContainer.className = `card-status status-${config.color}`;
       statusContainer.innerHTML = `<i class="fa-solid ${config.icon} ${config.pulse ? 'pulse-icon' : ''}"></i> <span>${config.label}</span>`;
 
-      const stepper = card.querySelector('.pipeline-stepper');
-      if (stepper) {
-        stepper.outerHTML = renderStepper(issue.status);
-      }
-
-      if (issue.classification) {
-        const oldClassBadge = card.querySelector('.badges [class*="class-"]');
-        if (oldClassBadge) oldClassBadge.remove();
+      if (issue.classification && !card.querySelector(`.class-${issue.classification}`)) {
         card.querySelector('.badges').insertAdjacentHTML('afterbegin', `<span class="badge class-${issue.classification}">${issue.classification}</span>`);
       }
-
       if (issue.confidence) {
-        const oldConf = card.querySelector('.badges [class*="conf-"]');
-        if (oldConf) oldConf.remove();
-        card.querySelector('.badges').insertAdjacentHTML('beforeend', `<span class="badge conf-${issue.confidence}">${issue.confidence.toUpperCase()}</span>`);
+        const old = card.querySelector('[class*="conf-"]');
+        if (old) old.remove();
+        card.querySelector('.badges').insertAdjacentHTML('beforeend', `<span class="badge conf-${issue.confidence}">${issue.confidence.toUpperCase()} Confidence</span>`);
       }
-
       if (issue.fix_pr_url && !card.querySelector('.pr-link')) {
         card.querySelector('.actions').insertAdjacentHTML('afterbegin', `<a href="${issue.fix_pr_url}" target="_blank" class="pr-link"><i class="fa-brands fa-github"></i> View PR</a>`);
       }
-
       if (issue.occurrence_count > 1) {
         const title = card.querySelector('.card-title');
         const occ = title.querySelector('.occurrence-badge');
         if (occ) occ.innerText = `${issue.occurrence_count}x`;
         else title.insertAdjacentHTML('beforeend', `<span class="badge occurrence-badge">${issue.occurrence_count}x</span>`);
-      }
-
-      if (issue.recommendation && !card.querySelector('.recommendation-box')) {
-        card.querySelector('.card-body').insertAdjacentHTML('beforeend', recommendationHtml(issue));
-      }
-
-      card.classList.toggle('is-fixing', issue.status === 'fixing');
-      card.style.animation = 'none';
-      void card.offsetWidth;
-      card.style.animation = 'flash 0.9s';
-    }
-
-    function markGithubLinked(linked) {
-      const text = linked ? 'GitHub: Linked' : 'GitHub: Pending';
-      const klass = linked ? 'success' : 'warning';
-
-      if (githubPill) {
-        githubPill.className = `pill ${klass}`;
-        githubPill.innerHTML = '<i class="fa-brands fa-github"></i> ' + text;
-      }
-
-      if (githubPillMobile) {
-        githubPillMobile.className = `pill ${klass}`;
-        githubPillMobile.innerHTML = '<i class="fa-brands fa-github"></i> ' + text;
       }
     }
 
@@ -579,12 +424,13 @@
       const token = localStorage.getItem('slothops_jwt');
       if (!token) return;
 
+      // Reveal dashboard
       authView.style.display = 'none';
       dashboardView.style.display = 'block';
       userControls.style.display = 'flex';
-      connectivityPills.style.display = 'flex';
-      connectivityPillsMobile.style.display = 'block';
+      pulse.style.display = 'block';
 
+      // Provision Settings Webhook dynamically derived from the JWT
       const decoded = decodeJWT(token);
       const host = window.location.origin;
       document.getElementById('workspace-id-display').innerText = decoded.workspace_id;
@@ -592,7 +438,9 @@
 
       const email = decoded.sub || 'user@example.com';
       const workspaceName = localStorage.getItem('slothops_workspace_name') || decoded.workspace_name || decoded.workspace_id || 'My Workspace';
-      profileName.innerText = `${email}`;
+      profileAvatar.innerText = email.charAt(0).toUpperCase();
+      profileName.innerText = `Hi welcome, ${email}`;
+      profileEmail.innerText = email;
       profileWorkspace.innerText = workspaceName;
 
       // Fetch Developer Config
@@ -611,7 +459,7 @@
           const val = document.getElementById('dev-config-json').value;
           const parsed = val ? JSON.parse(val) : null;
           if (parsed && typeof parsed !== 'object') throw new Error("Must be a JSON object");
-
+          
           btn.innerText = "Saving...";
           const res = await fetch('/api/developer-config', {
             method: 'POST',
@@ -623,22 +471,21 @@
           });
           if (!res.ok) throw new Error("Save failed");
           statusEl.innerText = "Saved successfully!";
-          statusEl.style.color = "#22c55e"; // success color
+          statusEl.style.color = "var(--success-color)";
         } catch (e) {
           statusEl.innerText = `Error: ${e.message}`;
-          statusEl.style.color = "#ef4444"; // danger color
+          statusEl.style.color = "var(--danger-color)";
         } finally {
           btn.innerText = "Save Config";
           setTimeout(() => { statusEl.innerText = ""; }, 3000);
         }
       };
 
-      markGithubLinked(localStorage.getItem('slothops_github_linked') === 'true');
-
+      // Intercept GitHub App Setup Redirect natively
       const urlParams = new URLSearchParams(window.location.search);
       const installationId = urlParams.get('installation_id');
       if (installationId) {
-        settingsModal.style.display = 'flex';
+        settingsModal.style.display = 'flex'; // Auto-open modal to show success
         fetch('/api/github/link', {
           method: 'POST',
           headers: {
@@ -649,13 +496,12 @@
         }).then(res => res.json()).then(data => {
           if (data.status === 'linked') {
             document.getElementById('github-success-msg').style.display = 'block';
-            localStorage.setItem('slothops_github_linked', 'true');
-            markGithubLinked(true);
             window.history.replaceState({}, document.title, window.location.pathname);
           }
         });
       }
 
+      // Fetch Historical Context scoped natively to JWT Bearer
       try {
         const res = await fetch('/issues', { headers: { 'Authorization': `Bearer ${token}` } });
         if (res.status === 401) {
@@ -663,7 +509,6 @@
           window.location.reload();
           return;
         }
-
         const data = await res.json();
         if (data && data.length > 0) {
           emptyState.style.display = 'none';
@@ -674,24 +519,24 @@
             feed.appendChild(card);
           });
         }
-      } catch (e) {
-        console.error(e);
-      }
+      } catch (e) { console.error(e); }
 
+      // Boot secure SSE
       const source = new EventSource(`/stream?token=${token}`);
 
       const handleIssueEvent = (event) => {
         const payload = JSON.parse(event.data);
         emptyState.style.display = 'none';
-
         if (payload.id) {
           const existing = document.getElementById(`issue-${payload.id}`);
           if (existing) {
             updateCard(existing, payload);
+            existing.style.animation = 'none';
+            existing.offsetHeight;
+            existing.style.animation = 'flash 1s';
             return;
           }
         }
-
         if (payload.id && !document.getElementById(`issue-${payload.id}`)) {
           fetch(`/issues/${payload.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
             .then(r => r.json())
@@ -719,15 +564,16 @@
       };
     }
 
+    // Main script execution
     if (localStorage.getItem('slothops_jwt')) {
       initDashboard();
     } else {
       authView.style.display = 'block';
       dashboardView.style.display = 'none';
       userControls.style.display = 'none';
-      connectivityPills.style.display = 'none';
-      connectivityPillsMobile.style.display = 'none';
+      pulse.style.display = 'none';
     }
+
   </script>
 </body>
 

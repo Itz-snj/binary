@@ -110,7 +110,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+import fastapi
+from fastapi.staticfiles import StaticFiles
+
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ── Auth & Security ──────────────────────────────────────────────────────
 from fastapi import Depends, HTTPException, status
