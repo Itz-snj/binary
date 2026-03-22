@@ -10,7 +10,6 @@ import { configRouter } from "./routes/config";
 import shippingRouter from "./routes/shipping";
 import marketingRouter from "./routes/marketing";
 import analyticsRouter from "./routes/analytics";
-import notificationsRouter from "./routes/notifications";
 import path from "path";
 
 dotenv.config();
@@ -41,7 +40,6 @@ app.use("/config", configRouter);
 app.use("/shipping", shippingRouter);
 app.use("/marketing", marketingRouter);
 app.use("/analytics", analyticsRouter);
-app.use("/notifications", notificationsRouter);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
