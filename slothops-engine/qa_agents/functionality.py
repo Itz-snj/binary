@@ -105,7 +105,7 @@ async def run_functionality_tests(
     cmd = None
     
     if language in ("typescript", "javascript"):
-        cmd = ["npx", "--yes", "jest", "--passWithNoTests"] + test_paths
+        cmd = ["npx", "--yes", "jest", "--passWithNoTests", "--forceExit"] + test_paths
     elif language == "python":
         cmd = ["python", "-m", "pytest"] + test_paths
     elif language == "go":
