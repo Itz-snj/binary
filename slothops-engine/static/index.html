@@ -223,6 +223,30 @@ port: 3000</pre>
     </div>
   </div>
 
+  <!-- QA Detail Modal -->
+  <div class="modal-overlay" id="qa-detail-modal">
+    <div class="modal" style="max-width: 720px; max-height: 85vh; overflow-y: auto;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3 id="qa-detail-title"><i class="fa-solid fa-clipboard-check"></i> QA Report Detail</h3>
+        <div id="qa-detail-status-badge" style="font-weight: 600; font-size: 0.85rem; padding: 0.25rem 0.75rem; border-radius: 999px;"></div>
+      </div>
+      <p style="color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.25rem;" id="qa-detail-meta"></p>
+
+      <div id="qa-detail-agents" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
+
+      <div id="qa-detail-ai-fix" style="display: none; margin-top: 1.25rem; padding: 1rem; background: rgba(139,92,246,0.08); border: 1px solid rgba(139,92,246,0.25); border-radius: 10px;">
+        <h4 style="color: #a78bfa; margin-bottom: 0.5rem;"><i class="fa-solid fa-robot"></i> AI Fix Recommendation</h4>
+        <div id="qa-detail-ai-fix-content" style="font-size: 0.85rem; color: var(--text-secondary); white-space: pre-wrap; line-height: 1.5;"></div>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem; margin-top: 1.5rem;">
+        <button class="btn" id="qa-detail-bypass-btn" style="background: var(--panel-bg); border: 1px solid var(--border-color); color: var(--text-secondary); flex: 1; display: none;"><i class="fa-solid fa-forward"></i> Bypass QA</button>
+        <a id="qa-detail-pr-link" href="#" target="_blank" class="btn" style="background: #2ea043; color: white; flex: 1; text-align: center; text-decoration: none; display: none;"><i class="fa-brands fa-github"></i> View PR</a>
+        <button class="btn modal-close" id="close-qa-detail" style="flex: 1;">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- JS Logic -->
   <script>
     // Elements
@@ -474,48 +498,60 @@ port: 3000</pre>
       }
     }
 
+    function qaStatusColor(st) {
+      if (st === 'passed') return { color: 'green', icon: 'fa-check-circle', bg: 'rgba(16,185,129,0.12)' };
+      if (st === 'failed') return { color: 'red', icon: 'fa-times-circle', bg: 'rgba(239,68,68,0.12)' };
+      if (st === 'warning') return { color: 'yellow', icon: 'fa-exclamation-triangle', bg: 'rgba(245,158,11,0.12)' };
+      if (st === 'bypassed') return { color: 'blue', icon: 'fa-forward-step', bg: 'rgba(59,130,246,0.12)' };
+      return { color: 'gray', icon: 'fa-circle-notch', bg: 'rgba(148,163,184,0.12)' };
+    }
+
     function createQACard(report) {
       const card = document.createElement('div');
       card.className = 'issue-card slide-in';
       card.id = `qa-${report.id}`;
+      card.style.cursor = 'pointer';
+      card.onclick = () => openQADetail(report.id);
 
-      let color = 'gray';
-      let icon = 'fa-circle-notch';
-      if (report.overall_status === 'passed') { color = 'green'; icon = 'fa-check-circle'; }
-      if (report.overall_status === 'failed') { color = 'red'; icon = 'fa-xmark-circle'; }
-      if (report.overall_status === 'warning') { color = 'yellow'; icon = 'fa-exclamation-triangle'; }
-      if (report.overall_status === 'bypassed') { color = 'blue'; icon = 'fa-forward-step'; }
-      if (report.overall_status === 'running') { color = 'purple'; icon = 'fa-circle-notch fa-spin'; }
+      const s = qaStatusColor(report.overall_status);
 
-      let bypassBtn = '';
-      if (report.overall_status === 'failed' || report.overall_status === 'warning') {
-        bypassBtn = `<button class="btn" style="background:var(--panel-bg); color:var(--text-secondary); padding:0.25rem 0.5rem; font-size:0.75rem;" onclick="bypassQA('${report.id}')"><i class="fa-solid fa-forward"></i> Bypass</button>`;
-      }
+      // Build mini agent badges
+      const agents = [
+        { key: 'static_analysis', label: 'Static' },
+        { key: 'functionality', label: 'Tests' },
+        { key: 'vapt', label: 'VAPT' },
+        { key: 'stress_test', label: 'Stress' },
+        { key: 'regression', label: 'Regression' },
+        { key: 'performance', label: 'Perf' },
+      ];
+      let agentBadges = '';
+      agents.forEach(a => {
+        const d = report[a.key];
+        if (!d) return;
+        const st = d.status || 'unknown';
+        const c = st === 'passed' ? '#10b981' : st === 'warning' ? '#f59e0b' : st === 'failed' ? '#ef4444' : '#94a3b8';
+        agentBadges += `<span style="display:inline-flex;align-items:center;gap:0.25rem;font-size:0.72rem;padding:0.15rem 0.5rem;border-radius:999px;background:${c}22;color:${c};border:1px solid ${c}44;">${a.label}</span>`;
+      });
 
-      const prLink = report.pr_url ? `<a href="${report.pr_url}" target="_blank" class="pr-link"><i class="fa-brands fa-github"></i> View PR</a>` : '';
+      const prLink = report.pr_url ? `<a href="${report.pr_url}" target="_blank" class="pr-link" onclick="event.stopPropagation()"><i class="fa-brands fa-github"></i> PR</a>` : '';
 
       card.innerHTML = `
         <div class="card-header">
           <div class="card-title">
-            <span class="error-type">QA Report PR #${report.pr_number}</span>
+            <span class="error-type">PR #${report.pr_number}</span>
+            <span style="font-size:0.8rem;color:var(--text-secondary);margin-left:0.5rem;">${report.repo_name}</span>
           </div>
-          <div class="card-status status-${color}">
-            <i class="fa-solid ${icon}"></i><span>${report.overall_status.toUpperCase()}</span>
+          <div class="card-status status-${s.color}">
+            <i class="fa-solid ${s.icon}"></i><span>${(report.overall_status || '').toUpperCase()}</span>
           </div>
         </div>
         <div class="card-body">
-          <p class="error-msg">${report.repo_name} @ ${report.commit_sha.substring(0,7)}</p>
-          <div style="margin-top:0.5rem; font-size:0.85rem; color:var(--text-secondary); white-space:pre-wrap;">${report.summary || 'Pipeline running...'}</div>
+          <p class="error-msg" style="font-family:var(--font-mono);font-size:0.82rem;">@ ${(report.commit_sha || '').substring(0,8)}</p>
+          <div style="margin-top:0.65rem;display:flex;flex-wrap:wrap;gap:0.35rem;">${agentBadges}</div>
         </div>
-        <div class="card-footer" style="padding-top: 1rem;">
-          <div class="badges">
-            ${report.static_analysis ? '<span class="badge">Static</span>' : ''}
-            ${report.functionality ? '<span class="badge">Tests</span>' : ''}
-            ${report.vapt ? '<span class="badge">VAPT</span>' : ''}
-            ${report.stress_test ? '<span class="badge">Stress</span>' : ''}
-          </div>
-          <div class="actions" style="gap: 1rem;">
-            ${bypassBtn}
+        <div class="card-footer" style="padding-top: 0.75rem;">
+          <div class="badges"></div>
+          <div class="actions" style="gap: 0.75rem;">
             ${prLink}
             <span class="time">${formatTime(report.created_at)}</span>
           </div>
@@ -545,13 +581,135 @@ port: 3000</pre>
       }
     }
 
+    // ── QA Detail Modal ──
+    const qaDetailModal = document.getElementById('qa-detail-modal');
+    document.getElementById('close-qa-detail').onclick = () => { qaDetailModal.style.display = 'none'; };
+    qaDetailModal.onclick = (e) => { if (e.target === qaDetailModal) qaDetailModal.style.display = 'none'; };
+
+    async function openQADetail(reportId) {
+      const token = localStorage.getItem('slothops_jwt');
+      try {
+        const res = await fetch(`/api/qa-reports/${reportId}`, { headers: { 'Authorization': `Bearer ${token}` } });
+        if (!res.ok) { alert('Failed to load report'); return; }
+        const r = await res.json();
+        renderQADetail(r);
+        qaDetailModal.style.display = 'flex';
+      } catch (e) { console.error(e); }
+    }
+
+    function renderQADetail(r) {
+      document.getElementById('qa-detail-title').innerHTML = `<i class="fa-solid fa-clipboard-check"></i> QA Report — PR #${r.pr_number}`;
+      const s = qaStatusColor(r.overall_status);
+      const badge = document.getElementById('qa-detail-status-badge');
+      badge.textContent = (r.overall_status || '').toUpperCase();
+      badge.style.background = s.bg;
+      badge.style.color = { green: '#10b981', red: '#ef4444', yellow: '#f59e0b', blue: '#3b82f6', gray: '#94a3b8' }[s.color];
+
+      document.getElementById('qa-detail-meta').innerHTML = `
+        <strong>${r.repo_name}</strong> &nbsp;·&nbsp; Commit <code>${(r.commit_sha || '').substring(0,8)}</code>
+        &nbsp;·&nbsp; ${new Date(r.created_at).toLocaleString()}
+      `;
+
+      // Render each agent section
+      const agents = [
+        { key: 'static_analysis', label: 'Static Analysis', icon: 'fa-magnifying-glass-chart' },
+        { key: 'functionality', label: 'Functionality Testing', icon: 'fa-vial' },
+        { key: 'vapt', label: 'VAPT Scan', icon: 'fa-shield-halved' },
+        { key: 'stress_test', label: 'Stress Testing', icon: 'fa-bolt' },
+        { key: 'regression', label: 'Regression Testing', icon: 'fa-rotate-left' },
+        { key: 'performance', label: 'Performance Baseline', icon: 'fa-gauge-high' },
+      ];
+
+      const container = document.getElementById('qa-detail-agents');
+      container.innerHTML = '';
+      agents.forEach(a => {
+        const d = r[a.key];
+        if (!d) return;
+        const st = d.status || 'unknown';
+        const sc = qaStatusColor(st);
+        const emoji = st === 'passed' ? '✅' : st === 'warning' ? '⚠️' : st === 'failed' ? '❌' : '⏳';
+
+        let logsHtml = '';
+        // Static analysis has issues array
+        if (a.key === 'static_analysis' && d.issues && d.issues.length > 0) {
+          let issuesContent = '';
+          d.issues.forEach(issue => {
+            issuesContent += `<div style="margin-bottom:0.5rem;"><strong>${issue.tool || 'Tool'}:</strong><pre style="background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;font-size:0.78rem;overflow-x:auto;margin-top:0.25rem;color:#e2e8f0;white-space:pre-wrap;">${escapeHtml(issue.output || 'No output')}</pre></div>`;
+          });
+          logsHtml = `<details style="margin-top:0.5rem;"><summary style="cursor:pointer;font-size:0.8rem;color:var(--brand-color);">View detailed logs</summary><div style="margin-top:0.5rem;">${issuesContent}</div></details>`;
+        }
+        // Other agents have logs string
+        if (d.logs && typeof d.logs === 'string') {
+          logsHtml = `<details style="margin-top:0.5rem;"><summary style="cursor:pointer;font-size:0.8rem;color:var(--brand-color);">View detailed logs</summary><pre style="background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;font-size:0.78rem;overflow-x:auto;margin-top:0.25rem;color:#e2e8f0;white-space:pre-wrap;max-height:200px;overflow-y:auto;">${escapeHtml(d.logs)}</pre></details>`;
+        }
+        if (d.failures) {
+          logsHtml += `<details style="margin-top:0.5rem;"><summary style="cursor:pointer;font-size:0.8rem;color:var(--brand-color);">View failures</summary><pre style="background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;font-size:0.78rem;overflow-x:auto;margin-top:0.25rem;color:#e2e8f0;white-space:pre-wrap;max-height:200px;overflow-y:auto;">${escapeHtml(typeof d.failures === 'string' ? d.failures : JSON.stringify(d.failures, null, 2))}</pre></details>`;
+        }
+
+        container.innerHTML += `
+          <div style="padding:0.75rem 1rem;background:${sc.bg};border:1px solid ${badge.style.color}22;border-radius:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-weight:600;font-size:0.88rem;"><i class="fa-solid ${a.icon}" style="margin-right:0.35rem;"></i>${a.label}</span>
+              <span style="font-size:0.8rem;">${emoji} ${st.toUpperCase()}</span>
+            </div>
+            <p style="font-size:0.82rem;color:var(--text-secondary);margin-top:0.35rem;">${d.summary || 'No summary.'}</p>
+            ${logsHtml}
+          </div>
+        `;
+      });
+
+      // AI fix suggestion — extract from summary
+      const aiFix = document.getElementById('qa-detail-ai-fix');
+      const aiContent = document.getElementById('qa-detail-ai-fix-content');
+      const summaryText = r.summary || '';
+      const aiIdx = summaryText.indexOf('### 🤖 AI Auto-Fix Recommendation');
+      if (aiIdx !== -1) {
+        aiFix.style.display = 'block';
+        aiContent.textContent = summaryText.substring(aiIdx + '### 🤖 AI Auto-Fix Recommendation'.length).trim();
+      } else {
+        aiFix.style.display = 'none';
+      }
+
+      // Bypass button
+      const bypassBtn = document.getElementById('qa-detail-bypass-btn');
+      if (r.overall_status === 'failed' || r.overall_status === 'warning') {
+        bypassBtn.style.display = 'block';
+        bypassBtn.onclick = async () => {
+          const reason = prompt('Enter reason for bypassing QA:');
+          if (!reason) return;
+          await bypassQA(r.id);
+          qaDetailModal.style.display = 'none';
+        };
+      } else {
+        bypassBtn.style.display = 'none';
+      }
+
+      // PR link
+      const prLink = document.getElementById('qa-detail-pr-link');
+      if (r.pr_url) {
+        prLink.href = r.pr_url;
+        prLink.style.display = 'block';
+      } else {
+        prLink.style.display = 'none';
+      }
+    }
+
+    function escapeHtml(text) {
+      const d = document.createElement('div');
+      d.textContent = text;
+      return d.innerHTML;
+    }
+
     async function loadQAReports() {
       const token = localStorage.getItem('slothops_jwt');
       try {
         const res = await fetch('/api/qa-reports', { headers: { 'Authorization': `Bearer ${token}` } });
         if (res.ok) {
           const data = await res.json();
+          // Keep the config hint
+          const hint = document.getElementById('qa-config-hint');
           qaFeed.innerHTML = '';
+          if (hint) qaFeed.appendChild(hint);
           if (data && data.length > 0) {
             emptyState.style.display = 'none';
             data.forEach(report => {
@@ -562,7 +720,7 @@ port: 3000</pre>
           } else if (tabQA.style.color === 'white') {
              emptyState.style.display = 'flex';
              emptyState.querySelector('p').innerText = "No QA Reports yet";
-             emptyState.querySelector('span').innerText = "Merge an Auto-fix PR to kick off the QA pipeline.";
+             emptyState.querySelector('span').innerText = "Open a PR on your linked repo to trigger the QA pipeline.";
           }
         }
       } catch (e) { console.error(e); }
