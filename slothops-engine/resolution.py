@@ -32,8 +32,8 @@ async def attempt_resolution(
     failed_sha: str,
     github_app_id: int,
     github_app_private_key: str,
-    gemini_api_key: str,
     db_path: str,
+    gemini_api_key: str = "",
     smtp_config: dict | None = None
 ) -> None:
     """

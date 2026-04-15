@@ -10,8 +10,9 @@ import json
 import logging
 from typing import Optional
 
-from google import genai
 from google.genai import types
+
+from genai_client import get_client
 
 logger = logging.getLogger("slothops.code_reviewer")
 
@@ -39,7 +40,7 @@ Format your entire response as a single markdown string containing:
 async def review_pr_code(
     changed_files: list[dict],
     codebase_context: str,
-    gemini_api_key: str,
+    gemini_api_key: str = "",
 ) -> str:
     """
     Send the file changes + codebase context to Gemini and get back an architecture/logic review.
@@ -58,14 +59,13 @@ async def review_pr_code(
         files_changed=files_block,
     )
 
-    client = genai.Client(api_key=gemini_api_key)
-
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=prompt,
+        from genai_client import generate_with_fallback
+        response_text, _ = await generate_with_fallback(
+            prompt=prompt,
+            preferred_model="gemini-2.5-pro"
         )
-        return response.text or ""
+        return response_text
     except Exception as e:
         logger.error("Code review failed: %s", e)
         return ""

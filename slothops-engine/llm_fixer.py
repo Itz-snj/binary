@@ -1,7 +1,7 @@
 """
-SlothOps Engine — LLM Fixer (Gemini Version)
-Constructs prompts, calls Google Gemini 2.5 Pro, and parses the JSON response
-into a validated LLMFixResponse.
+SlothOps Engine — LLM Fixer (Vertex AI)
+Constructs prompts, calls Google Gemini 2.5 Pro via Vertex AI,
+and parses the JSON response into a validated LLMFixResponse.
 """
 
 from __future__ import annotations
@@ -10,9 +10,9 @@ import json
 import logging
 from typing import Optional
 
-from google import genai
 from google.genai import types
 
+from genai_client import get_client
 from models import CallFrame, IssueRecord, LLMFixResponse
 from redactor import redact
 
@@ -151,18 +151,18 @@ def _parse_response(raw: str) -> LLMFixResponse:
 def generate_fix(
     issue: IssueRecord,
     code_context: dict[str, str],
-    gemini_api_key: str,
+    gemini_api_key: Optional[str] = None,
     previous_pr_url: Optional[str] = None,
     call_chain: list[CallFrame] | None = None,
     repo=None,
 ) -> LLMFixResponse:
     """
-    Call Gemini 2.5 Pro to generate a fix for the given issue.
+    Call Gemini 2.5 Pro via Vertex AI to generate a fix for the given issue.
 
     Raises:
         RuntimeError: If the LLM returns invalid JSON twice.
     """
-    client = genai.Client(api_key=gemini_api_key)
+    client = get_client()
     user_prompt = _build_user_prompt(issue, code_context, previous_pr_url, call_chain)
 
     # Convert Pydantic scheme to type for Gemini structured output
@@ -235,11 +235,7 @@ STACK TRACE:
 Provide a concise, 1-paragraph actionable recommendation for the DevOps team.
 Do NOT output JSON. Just output plain text markdown. 
 """
-    # Assuming gemini_api_key is available or we pass it? Wait, where do we get the API key?
-    # Actually, pipeline.py passes issue to generate_infra_recommendation, but not the API key!
-    # I need to get the API key. Let's import config or use load_dotenv.
-    import os
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
+    client = get_client()
     
     try:
         response = client.models.generate_content(
@@ -257,14 +253,14 @@ async def retry_fix_with_test_failure(
     code_context: dict[str, str],
     previous_fix: LLMFixResponse,
     test_output: str,
-    gemini_api_key: str,
+    gemini_api_key: Optional[str] = None,
     previous_pr_url: Optional[str] = None,
     call_chain: list[CallFrame] | None = None,
 ) -> LLMFixResponse:
     """
-    Call Gemini again to fix the fix based on local test failure output.
+    Call Gemini again via Vertex AI to fix the fix based on local test failure output.
     """
-    client = genai.Client(api_key=gemini_api_key)
+    client = get_client()
     base_prompt = _build_user_prompt(issue, code_context, previous_pr_url, call_chain)
     
     prev_files = "\n".join([f"--- {f.path} ---\n{f.fixed_content}" for f in previous_fix.files_changed])
@@ -286,7 +282,7 @@ async def retry_fix_with_test_failure(
     }
     config = types.GenerateContentConfig(**config_dict)
 
-    logger.info("Calling Gemini 2.5 Pro (Refix Attempt)...")
+    logger.info("Calling Gemini 2.5 Pro via Vertex AI (Refix Attempt)...")
     messages = [{"role": "user", "parts": [{"text": full_prompt}]}]
     
     response = client.models.generate_content(

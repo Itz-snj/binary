@@ -42,8 +42,7 @@ app.use("/marketing", marketingRouter);
 app.use("/analytics", analyticsRouter);
 
 app.get("/health", (req, res) => {
-  const status: number = "healthy";
-  res.json({ status });
+
 });
 
 app.get("/debug-sentry", function mainHandler(req, res) {

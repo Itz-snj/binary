@@ -10,8 +10,9 @@ import json
 import logging
 from typing import Optional
 
-from google import genai
 from google.genai import types
+
+from genai_client import get_client
 
 
 
@@ -49,7 +50,7 @@ If no style violations found, return: []
 async def review_against_preferences(
     changed_files: list[dict],
     developer_config: dict,
-    gemini_api_key: str,
+    gemini_api_key: str = "",
 ) -> list[dict]:
     """
     Send the file changes + developer preferences to Gemini and get back style comments.
@@ -68,18 +69,13 @@ async def review_against_preferences(
         files_changed=files_block,
     )
 
-    client = genai.Client(api_key=gemini_api_key)
-
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                response_mime_type="application/json",
-            ),
+        from genai_client import generate_with_fallback
+        raw, _ = await generate_with_fallback(
+            prompt=prompt,
+            preferred_model="gemini-2.5-pro",
+            response_mime_type="application/json"
         )
-        raw = response.text or "[]"
         comments = json.loads(raw)
         if isinstance(comments, list):
             logger.info("Style reviewer returned %d comment(s)", len(comments))

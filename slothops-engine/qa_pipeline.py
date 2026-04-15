@@ -17,7 +17,8 @@ from qa_agents.regression import run_regression_tests
 from qa_agents.performance import run_performance_check
 from email_sender import send_qa_report_email
 from github_automation import post_qa_report_comment
-from google import genai
+from genai_client import get_client
+from google.genai import types as genai_types
 import json
 
 SMTP_HOST = os.getenv("SMTP_HOST", "")
@@ -46,10 +47,10 @@ def _set_commit_status(repo, sha: str, state: str, description: str, target_url:
 async def run_qa_pipeline(
     payload: dict,
     workspace_id: str,
-    gemini_api_key: str,
     github_app_id: int,
     github_app_private_key: str,
-    db_path: str
+    db_path: str,
+    gemini_api_key: str = "",
 ):
     """
     Main QA orchestrator. Triggers upon PR close/merge.
@@ -204,7 +205,7 @@ async def run_qa_pipeline(
 
         logger.info("🛠️ Initializing Native GenAI Orchestrator...")
         try:
-            client = genai.Client(api_key=gemini_api_key)
+            client = get_client()
             system_msg = (
                 "You are the QA Orchestrator for SlothOps. Decide which QA tools to run.\n"
                 "Must run: StaticAnalysis, VAPTScan.\n"
@@ -216,16 +217,15 @@ async def run_qa_pipeline(
             )
             user_msg = f"Changed {len(changed_paths)} files:\\n{changed_paths}\\nStack: {stack_config.get('language')}/{stack_config.get('framework')}\\nHas start_command: {bool(stack_config.get('start_command'))}\\nHas test_command: {bool(stack_config.get('test_command'))}"
             
+            from genai_client import generate_with_fallback
             logger.info("🛠️ Asking LLM for QA Agent list...")
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=user_msg,
-                config=genai.types.GenerateContentConfig(
-                    system_instruction=system_msg,
-                    temperature=0.0
-                )
+            raw_text, _ = await generate_with_fallback(
+                prompt=user_msg,
+                preferred_model='gemini-2.5-flash',
+                fallback_model='gemini-2.5-flash',
+                system_instruction=system_msg
             )
-            raw_text = response.text.replace("```json", "").replace("```", "").strip()
+            raw_text = raw_text.replace("```json", "").replace("```", "").strip()
             tool_names = json.loads(raw_text)
             logger.info(f"🧠 LLM chose tools: {tool_names}")
             
@@ -293,11 +293,12 @@ async def run_qa_pipeline(
                         "Then, provide code snippets or concrete recommendations to fix the issues.\n\n"
                         f"Error Logs:\n{error_context}"
                     )
-                    fix_resp = client.models.generate_content(
-                        model='gemini-2.5-pro',
-                        contents=fix_prompt,
+                    from genai_client import generate_with_fallback
+                    fix_resp_text, _ = await generate_with_fallback(
+                        prompt=fix_prompt,
+                        preferred_model='gemini-2.5-pro'
                     )
-                    summary_text += f"\n\n### 🤖 AI Auto-Fix Recommendation\n\n{fix_resp.text}\n"
+                    summary_text += f"\n\n### 🤖 AI Auto-Fix Recommendation\n\n{fix_resp_text}\n"
                 except Exception as e:
                     logger.error("Failed to generate fix recommendation: %s", e)
             # --------------------------

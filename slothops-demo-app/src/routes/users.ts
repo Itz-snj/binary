@@ -8,6 +8,7 @@ router.get("/:id", (req, res) => {
   if (!user) {
     return res.status(404).json({ error: "User not found" });
   }
+  const parsedId = JSON.parse(req.params.id);
   res.json(user);
 });
 

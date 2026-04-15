@@ -28,7 +28,7 @@ from sse_manager import broadcast, subscribe
 from dotenv import load_dotenv
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", None)
 
 # Support both inline PEM and file path
@@ -202,6 +202,17 @@ async def serve_css():
         return FileResponse(css_path)
     return JSONResponse({"error": "Not found"}, status_code=404)
 
+@app.get("/static/{file_path:path}")
+async def serve_static(file_path: str):
+    """Serve static assets (images, fonts, etc.) from the static directory."""
+    safe_path = os.path.normpath(file_path)
+    if safe_path.startswith(".."):
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    full_path = os.path.join(STATIC_DIR, safe_path)
+    if os.path.exists(full_path) and os.path.isfile(full_path):
+        return FileResponse(full_path)
+    return JSONResponse({"error": "Not found"}, status_code=404)
+
 
 @app.post("/webhook/sentry/{workspace_id}")
 async def receive_sentry_webhook(workspace_id: str, request: Request):
@@ -239,7 +250,7 @@ async def receive_sentry_webhook(workspace_id: str, request: Request):
         run_pipeline(
             issue=issue,
             db_path=DATABASE_PATH,
-            gemini_api_key=GEMINI_API_KEY,
+            gemini_api_key="",
             github_app_id=GITHUB_APP_ID,
             github_app_private_key=GITHUB_APP_PRIVATE_KEY,
         )
@@ -293,23 +304,43 @@ async def receive_github_webhook(request: Request):
             if workspace_id:
                 from github_automation import handle_human_pr_review
                 from qa_pipeline import run_qa_pipeline
-                logger.info("Received Human PR event %s for workspace %s, queuing review + QA...", action, workspace_id)
+                
+                sender_login = payload.get("sender", {}).get("login", "")
+                
+                if sender_login.endswith("[bot]") or "slothops" in sender_login.lower():
+                    logger.info("Bot commit detected from %s, running QA only (skipping review)", sender_login)
+                    asyncio.create_task(run_qa_pipeline(
+                        payload=payload,
+                        workspace_id=workspace_id,
+                        gemini_api_key="",
+                        github_app_id=GITHUB_APP_ID,
+                        github_app_private_key=GITHUB_APP_PRIVATE_KEY,
+                        db_path=DATABASE_PATH
+                    ))
+                    return {"status": "qa_only_queued"}
+                
+                logger.info("Received Human PR event %s for workspace %s, queuing review + delayed QA...", action, workspace_id)
+                
+                async def _delayed_qa():
+                    await asyncio.sleep(5) # Stagger LLM calls to prevent quota spikes
+                    await run_qa_pipeline(
+                        payload=payload,
+                        workspace_id=workspace_id,
+                        gemini_api_key="",
+                        github_app_id=GITHUB_APP_ID,
+                        github_app_private_key=GITHUB_APP_PRIVATE_KEY,
+                        db_path=DATABASE_PATH
+                    )
+                
                 asyncio.create_task(handle_human_pr_review(
                     payload=payload,
                     workspace_id=workspace_id,
-                    gemini_api_key=GEMINI_API_KEY,
+                    gemini_api_key="",
                     github_app_id=GITHUB_APP_ID,
                     github_app_private_key=GITHUB_APP_PRIVATE_KEY,
                     db_path=DATABASE_PATH
                 ))
-                asyncio.create_task(run_qa_pipeline(
-                    payload=payload,
-                    workspace_id=workspace_id,
-                    gemini_api_key=GEMINI_API_KEY,
-                    github_app_id=GITHUB_APP_ID,
-                    github_app_private_key=GITHUB_APP_PRIVATE_KEY,
-                    db_path=DATABASE_PATH
-                ))
+                asyncio.create_task(_delayed_qa())
                 return {"status": "review_and_qa_queued"}
 
     if github_event == "deployment_status":
@@ -343,7 +374,7 @@ async def receive_github_webhook(request: Request):
                                 failed_sha=sha,
                                 github_app_id=GITHUB_APP_ID,
                                 github_app_private_key=GITHUB_APP_PRIVATE_KEY,
-                                gemini_api_key=str(os.getenv("GEMINI_API_KEY", "")),
+                                gemini_api_key="",
                                 db_path=DATABASE_PATH,
                                 smtp_config={
                                     "SMTP_HOST": SMTP_HOST,
@@ -484,6 +515,247 @@ async def bypass_qa(report_id: str, req: QABypassRequest, workspace_id: str = De
     return {"status": "bypassed"}
 
 
+@app.post("/api/qa-resolve/{report_id}")
+async def resolve_qa(report_id: str, workspace_id: str = Depends(get_current_workspace)):
+    """
+    AI-driven QA resolution: reads failed QA agents' logs, calls LLM to generate fixes,
+    and commits them to the PR branch. The push triggers a 'synchronize' event which
+    re-runs the review + QA pipeline automatically.
+    """
+    report = await db.get_qa_report(report_id, DATABASE_PATH)
+    if not report or report.workspace_id != workspace_id:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    if report.overall_status not in ("failed", "warning"):
+        raise HTTPException(status_code=400, detail="QA is not in a failed/warning state")
+
+    logger.info("🔧 QA Resolve triggered for report %s (PR #%s)", report_id, report.pr_number)
+
+    # Update status so the dashboard shows progress
+    await db.update_qa_report(report_id, DATABASE_PATH, overall_status="resolving",
+                              summary="SlothOps is generating fixes for the QA failures...")
+    asyncio.create_task(broadcast("qa_update", {"id": report_id, "status": "resolving"}))
+
+    # Run the resolution in the background
+    asyncio.create_task(_run_qa_resolution(report, workspace_id))
+
+    return {"status": "resolving", "message": "QA resolution started. Fixes will be committed to the PR branch."}
+
+
+async def _run_qa_resolution(report, workspace_id: str):
+    """Background task: generate LLM fixes for QA failures and push to PR branch."""
+    from github import GithubIntegration, Github, GithubException
+
+    try:
+        # 1. Auth GitHub
+        integration = await db.get_integration(workspace_id, DATABASE_PATH)
+        if not integration or not integration.github_installation_id:
+            logger.error("QA Resolve: No GitHub App linked")
+            await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
+                                      summary="Resolution failed: GitHub App not connected.")
+            return
+
+        private_key = GITHUB_APP_PRIVATE_KEY
+        if private_key and os.path.isfile(private_key):
+            with open(private_key, "r") as f:
+                private_key = f.read()
+
+        gi = GithubIntegration(GITHUB_APP_ID, private_key)
+        token = gi.get_access_token(int(integration.github_installation_id)).token
+        gh = Github(token)
+        repo = gh.get_repo(report.repo_name)
+        pr = repo.get_pull(report.pr_number)
+        pr_branch = pr.head.ref
+
+        logger.info("🔧 QA Resolve: Fetching files from PR #%s branch '%s'", report.pr_number, pr_branch)
+
+        # 2. Fetch changed files from the PR
+        gh_files = pr.get_files()
+        code_context = {}
+        for f in gh_files:
+            if f.status == "removed":
+                continue
+            try:
+                content_file = repo.get_contents(f.filename, ref=pr_branch)
+                if not isinstance(content_file, list):
+                    code_context[f.filename] = {
+                        "patch": getattr(f, "patch", "No diff available"),
+                        "content": content_file.decoded_content.decode("utf-8", errors="replace")
+                    }
+            except Exception:
+                pass
+
+        if not code_context:
+            logger.error("QA Resolve: No code files found in PR")
+            await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
+                                      summary="Resolution failed: no code files found in the PR.")
+            return
+
+        # 3. Build error context from all failing QA agents
+        error_context = ""
+        agents = [
+            ("Static Analysis", report.static_analysis),
+            ("Functionality Testing", report.functionality),
+            ("VAPT Scan", report.vapt),
+            ("Stress Testing", report.stress_test),
+            ("Regression Testing", report.regression),
+            ("Performance", report.performance),
+        ]
+        for name, data in agents:
+            if data and data.get("status") in ("failed", "warning"):
+                error_context += f"\n### {name}\n"
+                error_context += f"Summary: {data.get('summary', 'N/A')}\n"
+                if data.get("issues"):
+                    error_context += f"Issues: {json.dumps(data['issues'], indent=2)}\n"
+                if data.get("failures"):
+                    failures = data["failures"]
+                    if isinstance(failures, str):
+                        error_context += f"Failures:\n{failures}\n"
+                    else:
+                        error_context += f"Failures: {json.dumps(failures, indent=2)}\n"
+                if data.get("logs"):
+                    error_context += f"Logs:\n{data['logs'][:2000]}\n"
+
+        # 4. Call LLM to generate fixes
+        logger.info("🔧 QA Resolve: Calling LLM with %d files and error context...", len(code_context))
+        from genai_client import generate_with_fallback
+
+        files_section = ""
+        for path, data in code_context.items():
+            files_section += f"\n--- FILE: {path} ---\n"
+            files_section += f"DIFF:\n{data['patch']}\n"
+            files_section += f"FULL CONTENT:\n{data['content']}\n"
+
+        prompt = (
+            "You are a Senior DevOps and Software Engineer tasked with forcing a failing CI/QA pipeline to pass.\n\n"
+            "CRITICAL RULES:\n"
+            "1. You must resolve EVERY single failure reported in the QA logs so the pipeline passes green.\n"
+            "2. This includes pre-existing project debt, ESLint config issues, npm audit vulnerabilities, test failures, etc.\n"
+            "3. If fixing an issue requires updating a file that is NOT in the PR context (e.g. updating `package.json` for vulnerabilities, or creating `eslint.config.js`), you MUST include it in your output `fixes` array. The system supports creating new files and updating existing ones.\n"
+            "4. Only use `skip_reasons` if an issue is physically impossible to fix via code changes (e.g. a third-party service is down). If it can be fixed with a code/config change, FIX IT.\n\n"
+            "## QA Failure Logs\n"
+            f"{error_context}\n\n"
+            "## PR Changed Files (For Context)\n"
+            f"{files_section}\n\n"
+            "## Instructions\n"
+            "1. Analyze each QA failure.\n"
+            "2. Generate FIXED versions of ANY files needed to pass QA (including files not listed above).\n"
+            "3. Output valid JSON with this exact structure:\n"
+            "```json\n"
+            "{\n"
+            '  "fixes": [\n'
+            '    {\n'
+            '      "path": "relative/file/path.ts",\n'
+            '      "fixed_content": "...entire fixed file content...",\n'
+            '      "explanation": "Brief explanation of what was fixed and why"\n'
+            "    }\n"
+            "  ],\n"
+            '  "skip_reasons": [\n'
+            '    {\n'
+            '      "agent": "Static Analysis or VAPT etc",\n'
+            '      "reason": "Brief explanation of why this was skipped (e.g. pre-existing debt, config issue)"\n'
+            '    }\n'
+            '  ],\n'
+            '  "commit_message": "fix: brief description of all fixes"\n'
+            "}\n"
+            "```\n"
+            "Output ONLY the JSON. No markdown code blocks, no other text."
+        )
+
+        try:
+            raw, model_used = await generate_with_fallback(prompt)
+        except Exception as e:
+            await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
+                                      summary=f"Resolution failed: LLM error: {e}")
+            return
+
+        # Strip markdown code blocks if present
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        raw = raw.strip()
+
+        fix_data = json.loads(raw)
+        fixes = fix_data.get("fixes", [])
+        skip_reasons = fix_data.get("skip_reasons", [])
+        commit_msg = fix_data.get("commit_message", "fix: resolve QA failures")
+
+        if not fixes and not skip_reasons:
+            logger.warning("QA Resolve: LLM returned no fixes and no skip reasons")
+            await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
+                                      summary="Resolution failed: LLM could not determine fixes or skip reasons.")
+            return
+
+        # 5. Commit fixes to the PR branch (if any)
+        committed = 0
+        if fixes:
+            logger.info("🔧 QA Resolve: Pushing %d fixed file(s) to branch '%s'", len(fixes), pr_branch)
+            from github import InputGitTreeElement
+            
+            elements = []
+            for fix in fixes:
+                path = fix.get("path", "")
+                fixed_content = fix.get("fixed_content", "")
+                if path and fixed_content:
+                    elements.append(InputGitTreeElement(path, "100644", "blob", fixed_content))
+
+            if elements:
+                try:
+                    ref = repo.get_git_ref(f"heads/{pr_branch}")
+                    latest_commit_sha = ref.object.sha
+                    base_tree = repo.get_git_tree(latest_commit_sha)
+
+                    new_tree = repo.create_git_tree(elements, base_tree)
+                    parent_commit = repo.get_git_commit(latest_commit_sha)
+                    
+                    new_commit = repo.create_git_commit(commit_msg, new_tree, [parent_commit])
+                    ref.edit(new_commit.sha)
+
+                    committed = len(elements)
+                    logger.info("  ✅ Atomically committed %d files under SHA: %s", committed, new_commit.sha)
+                except Exception as exc:
+                    logger.error("  ❌ Failed to push atomic commit for QA Resolve: %s", exc)
+
+        # 6. Post a comment on the PR
+        comment_body = "## 🦥 SlothOps QA Auto-Resolution\n\n"
+        if committed > 0:
+            fix_summary = "\n".join([f"- `{f['path']}`: {f.get('explanation', 'Fixed')}" for f in fixes if f.get("path")])
+            comment_body += f"I analyzed the QA failures and pushed **{committed} fix(es)** to this branch.\n\n### Changes\n{fix_summary}\n\n"
+            comment_body += "The QA pipeline will re-run automatically on this push.\n\n"
+        else:
+            comment_body += "No directly fixable issues were found in the scope of this PR.\n\n"
+
+        if skip_reasons:
+            comment_body += "### Skipped (Pre-existing / Out of Scope)\n"
+            comment_body += "\n".join([f"- **{sr.get('agent', 'QA')}**: {sr.get('reason', 'Skipped')}" for sr in skip_reasons])
+            
+        pr.create_issue_comment(comment_body)
+
+        # Update the report
+        if committed > 0:
+            status_text = f"QA resolution committed {committed} fix(es). Re-running QA..."
+            overall_status = "resolved"
+        else:
+            status_text = "Analysis complete: No directly fixable PR bugs identified. See PR comment for skipped issues."
+            overall_status = "resolved"  # "resolved" because the bot completed its job successfully
+
+        await db.update_qa_report(report.id, DATABASE_PATH, overall_status=overall_status,
+                                  summary=status_text)
+        await broadcast("qa_update", {"id": report.id, "status": overall_status})
+
+        logger.info("🔧 ✅ QA Resolve complete: %d file(s) committed to %s", committed, pr_branch)
+
+    except json.JSONDecodeError as e:
+        logger.error("QA Resolve: LLM returned invalid JSON: %s", e)
+        await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
+                                  summary=f"Resolution failed: LLM returned invalid JSON.")
+    except Exception as e:
+        logger.error("QA Resolve failed: %s", e, exc_info=True)
+        await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
+                                  summary=f"Resolution failed: {str(e)[:200]}")
+
+
 @app.get("/api/developer-config")
 async def get_developer_config(workspace_id: str = Depends(get_current_workspace)):
     """Retrieve current developer.json preferences for this workspace."""
@@ -506,6 +778,119 @@ async def get_issue(issue_id: str, workspace_id: str = Depends(get_current_works
     if not issue:
         return JSONResponse({"error": "Not found"}, status_code=404)
     return issue.model_dump(mode="json")
+
+# ── Integration & Health Status ──────────────────────────────────────────
+
+@app.get("/api/integrations/status")
+async def integrations_status(workspace_id: str = Depends(get_current_workspace)):
+    """
+    Returns live integration status for the current workspace:
+    - GitHub App linked? Which repos?
+    - Which repo is the active target?
+    - Sentry webhook configured?
+    """
+    integration = await db.get_integration(workspace_id, DATABASE_PATH)
+
+    github_linked = False
+    github_repos = []
+    github_installation_id = None
+    target_repo = os.getenv("GITHUB_REPO", "")
+
+    if integration and integration.github_installation_id:
+        github_installation_id = integration.github_installation_id
+        github_linked = True
+
+        # Fetch actual connected repos using the correct GitHub App API
+        try:
+            from github import GithubIntegration, Auth
+            private_key = GITHUB_APP_PRIVATE_KEY
+            if private_key and os.path.isfile(private_key):
+                with open(private_key, "r") as f:
+                    private_key = f.read()
+
+            auth = Auth.AppAuth(GITHUB_APP_ID, private_key)
+            gi = GithubIntegration(auth=auth)
+            inst = gi.get_app_installation(int(integration.github_installation_id))
+
+            for repo in inst.get_repos():
+                is_target = (repo.full_name == target_repo)
+                github_repos.append({
+                    "full_name": repo.full_name,
+                    "private": repo.private,
+                    "default_branch": repo.default_branch,
+                    "language": repo.language,
+                    "url": repo.html_url,
+                    "is_target": is_target,
+                })
+
+            # Sort: target repo first, then alphabetical
+            github_repos.sort(key=lambda r: (not r["is_target"], r["full_name"]))
+
+        except Exception as e:
+            logger.warning("Could not fetch repos for workspace %s: %s", workspace_id, e)
+
+    return {
+        "github": {
+            "linked": github_linked,
+            "installation_id": github_installation_id,
+            "target_repo": target_repo,
+            "repos": github_repos,
+            "total_repos": len(github_repos),
+        },
+        "sentry": {
+            "webhook_url": f"{os.getenv('BASE_URL', '')}/webhook/sentry/{workspace_id}",
+            "configured": True,
+        },
+    }
+
+
+@app.get("/api/health/llm")
+async def health_llm(workspace_id: str = Depends(get_current_workspace)):
+    """
+    Live health check: sends a tiny prompt to Vertex AI and reports latency + model availability.
+    """
+    import time
+    try:
+        from genai_client import get_client
+        client = get_client()
+        start = time.time()
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents="Reply with exactly: OK",
+        )
+        latency_ms = int((time.time() - start) * 1000)
+        reply = (response.text or "").strip()
+
+        return {
+            "status": "healthy",
+            "model": "gemini-2.5-flash",
+            "latency_ms": latency_ms,
+            "response": reply[:50],
+            "provider": "Vertex AI",
+            "project": os.getenv("GOOGLE_CLOUD_PROJECT", ""),
+            "location": os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
+        }
+    except Exception as e:
+        logger.error("LLM health check failed: %s", e)
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "provider": "Vertex AI",
+            "project": os.getenv("GOOGLE_CLOUD_PROJECT", ""),
+            "location": os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
+        }
+
+
+@app.get("/api/health/engine")
+async def health_engine():
+    """Basic liveness probe — returns engine version and uptime info."""
+    return {
+        "status": "ok",
+        "engine": "SlothOps",
+        "version": "0.2.0",
+        "database": DATABASE_PATH,
+    }
+
 
 @app.get("/stream")
 async def sse_stream(token: str):

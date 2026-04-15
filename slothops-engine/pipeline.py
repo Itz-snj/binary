@@ -42,7 +42,7 @@ async def _update(
 async def run_pipeline(
     issue: IssueRecord,
     db_path: str,
-    gemini_api_key: str,
+    gemini_api_key: str = "",
     github_app_id: str | None = None,
     github_app_private_key: str | None = None,
 ) -> None:

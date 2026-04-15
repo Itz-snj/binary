@@ -2,8 +2,9 @@ import json
 import logging
 import os
 import subprocess
-from google import genai
 from google.genai import types
+
+from genai_client import get_client
 
 logger = logging.getLogger("slothops.qa.functionality")
 
@@ -37,7 +38,7 @@ CHANGED FILES:
 async def run_functionality_tests(
     repo_dir: str, 
     changed_files: list[dict], 
-    gemini_api_key: str,
+    gemini_api_key: str = "",
     stack_config: dict = None
 ) -> dict:
     """
@@ -56,7 +57,7 @@ async def run_functionality_tests(
     test_command = stack_config.get("test_command")
     
     logger.info("Functionality QA: Generating tests for %s/%s stack...", language, framework)
-    client = genai.Client(api_key=gemini_api_key)
+    client = get_client()
     
     files_str = ""
     for cf in changed_files:

@@ -208,10 +208,10 @@ def post_general_pr_comment(pr_url: str, comment_body: str, repo) -> None:
 async def handle_human_pr_review(
     payload: dict,
     workspace_id: str,
-    gemini_api_key: str,
     github_app_id: int,
     github_app_private_key: str,
-    db_path: str
+    db_path: str,
+    gemini_api_key: str = "",
 ):
     """
     Handle a manually raised PR: fetch the PR files, run style and architecture

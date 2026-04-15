@@ -19,9 +19,8 @@ def _require(key: str) -> str:
 
 
 # ── Required keys ────────────────────────────────────────────────────────
-GEMINI_API_KEY = _require("GEMINI_API_KEY")
-GITHUB_TOKEN: str = _require("GITHUB_TOKEN")
-GITHUB_REPO: str = _require("GITHUB_REPO")
+GOOGLE_CLOUD_PROJECT: str = _require("GOOGLE_CLOUD_PROJECT")
+GOOGLE_CLOUD_LOCATION: str = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 
 # --- Optional (sensible defaults) ---
 SENTRY_WEBHOOK_SECRET: str | None = os.getenv("SENTRY_WEBHOOK_SECRET")

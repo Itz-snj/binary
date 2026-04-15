@@ -4,8 +4,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SlothOps Command Center</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>SlothOps · Auto-Remediation Command Center</title>
+  <meta name="description"
+    content="SlothOps automates production bug remediation with AI-powered analysis, rollback safety nets, and QA pipelines. Ship fearlessly.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -13,154 +14,209 @@
     rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="/static/logo.png" type="image/png">
 </head>
 
-<body class="deep-space-bg text-slate-100 font-ui min-h-screen">
-  <header class="sticky top-0 z-50 border-b border-slate-700/70 backdrop-blur-xl bg-slate-950/70">
-    <div class="max-w-[1440px] mx-auto px-4 lg:px-8 py-3">
-      <div class="flex items-center justify-between gap-4">
-        <div class="flex items-center gap-3">
-          <img src="/static/logo.svg" alt="SlothOps logo" class="brand-logo">
-          <div>
-            <h1 class="text-lg font-semibold tracking-tight">SlothOps</h1>
-            <p class="text-xs text-slate-400">Auto-Remediation Command Center</p>
-          </div>
-        </div>
+<body class="deep-space-bg font-ui">
 
-        <div class="hidden md:flex items-center gap-2" id="connectivity-pills" style="display:none;">
-          <span class="pill success"><i class="fa-solid fa-satellite-dish"></i> Sentry: Active</span>
-          <span class="pill success" id="github-pill"><i class="fa-brands fa-github"></i> GitHub: Linked</span>
-          <span class="pill engine" id="engine-pill"><span class="engine-dot"></span> Engine: Live</span>
+  <!-- ═══════════════════════════════════════════════════════════════
+       HEADER
+       ═══════════════════════════════════════════════════════════════ -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-brand">
+        <img src="/static/logo.png" alt="SlothOps" class="brand-logo">
+        <div class="brand-text">
+          <h1>SlothOps</h1>
+          <p>Command Center</p>
         </div>
+      </div>
 
-        <div class="flex items-center gap-2" id="user-controls" style="display:none;">
-          <button id="btn-settings" class="tray-btn" title="Integration Settings">
-            <i class="fa-solid fa-plug"></i>
-            <span class="hidden sm:inline">Connect Sentry</span>
+      <div class="header-center" id="connectivity-pills" style="display:none;">
+        <span class="status-pill is-active"><span class="dot"></span> Sentry</span>
+        <span class="status-pill is-inactive" id="github-pill"><i class="fa-brands fa-github"></i> GitHub ⚠</span>
+        <span class="status-pill is-inactive" id="llm-pill"><i class="fa-solid fa-robot"></i> LLM</span>
+        <span class="status-pill is-active" id="engine-pill"><span class="dot"></span> Engine</span>
+      </div>
+
+      <div class="header-controls" id="user-controls" style="display:none;">
+        <button id="btn-settings" class="action-btn" title="Integration Settings">
+          <i class="fa-solid fa-plug"></i>
+          <span>Integrations</span>
+        </button>
+        <button id="btn-sentry-setup" class="action-btn is-accent" title="Sentry Setup Studio">
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          <span>Setup Studio</span>
+        </button>
+        <div class="profile-menu" id="profile-menu">
+          <button id="profile-toggle" class="profile-toggle" aria-label="Open profile menu" aria-expanded="false">
+            <i class="fa-regular fa-user"></i>
           </button>
-          <button id="btn-sentry-setup" class="tray-btn tray-btn-ai" title="Setup Prompt Studio">
-            <i class="fa-solid fa-wand-magic-sparkles"></i>
-            <span class="hidden sm:inline">Setup Studio</span>
-          </button>
-          <div class="profile-menu" id="profile-menu">
-            <button id="profile-toggle" class="profile-toggle" aria-label="Open profile menu" aria-expanded="false">
-              <i class="fa-regular fa-user"></i>
-            </button>
-            <div class="profile-dropdown" id="profile-dropdown" hidden>
-              <div class="profile-dropdown-top">
-                <div class="profile-meta">
-                  <h3 id="profile-name">Hi welcome, User</h3>
-                  <p><i class="fa-solid fa-building"></i> Workspace Name: <span id="profile-workspace">-</span></p>
-                </div>
-              </div>
-              <button id="btn-logout" class="profile-logout-btn">
-                <i class="fa-solid fa-arrow-right-from-bracket"></i> Logout
-              </button>
+          <div class="profile-dropdown" id="profile-dropdown" hidden>
+            <div class="profile-meta">
+              <h3 id="profile-name">Welcome</h3>
+              <p><i class="fa-solid fa-building"></i> <span id="profile-workspace">—</span></p>
             </div>
+            <button id="btn-logout" class="profile-logout-btn">
+              <i class="fa-solid fa-arrow-right-from-bracket"></i> Sign Out
+            </button>
           </div>
         </div>
       </div>
-      <div class="mt-2 md:hidden" id="connectivity-pills-mobile" style="display:none;">
-        <div class="flex flex-wrap gap-2">
-          <span class="pill success"><i class="fa-solid fa-satellite-dish"></i> Sentry: Active</span>
-          <span class="pill success" id="github-pill-mobile"><i class="fa-brands fa-github"></i> GitHub: Linked</span>
-          <span class="pill engine"><span class="engine-dot"></span> Engine: Live</span>
-        </div>
-      </div>
+    </div>
+
+    <!-- Mobile status pills -->
+    <div class="mobile-pills" id="connectivity-pills-mobile" style="display:none;">
+      <span class="status-pill is-active"><span class="dot"></span> Sentry</span>
+      <span class="status-pill is-inactive" id="github-pill-mobile"><i class="fa-brands fa-github"></i> GitHub ⚠</span>
+      <span class="status-pill is-inactive" id="llm-pill-mobile"><i class="fa-solid fa-robot"></i> LLM</span>
+      <span class="status-pill is-active"><span class="dot"></span> Engine</span>
     </div>
   </header>
 
-  <div id="auth-view" class="px-4 py-10">
+  <!-- ═══════════════════════════════════════════════════════════════
+       AUTH VIEW - Login & Signup
+       ═══════════════════════════════════════════════════════════════ -->
+  <div id="auth-view">
     <div class="auth-brand-wrap">
-      <img src="/static/logo.svg" alt="SlothOps logo" class="auth-brand-logo">
+      <img src="/static/logo.png" alt="SlothOps" class="auth-brand-logo">
     </div>
+
+    <!-- Login -->
     <div class="auth-container" id="login-box">
-      <h2>Welcome Back</h2>
-      <p>Log in to view your workspace</p>
+      <h2>Welcome back</h2>
+      <p>Sign in to your workspace</p>
       <form id="login-form">
-        <div class="form-group"><label>Email</label><input type="email" id="login-email" required></div>
-        <div class="form-group"><label>Password</label><input type="password" id="login-pass" required></div>
-        <button type="submit" class="btn">Sign In</button>
+        <div class="form-group">
+          <label for="login-email">Email</label>
+          <input type="email" id="login-email" placeholder="you@company.com" required>
+        </div>
+        <div class="form-group">
+          <label for="login-pass">Password</label>
+          <input type="password" id="login-pass" placeholder="••••••••" required>
+        </div>
+        <button type="submit" class="btn-primary">Sign In</button>
         <div class="auth-error" id="login-error"></div>
       </form>
-      <div class="auth-toggle">Need an organization? <span id="to-signup">Create Workspace</span></div>
+      <div class="auth-toggle">New to SlothOps? <span id="to-signup">Create a workspace</span></div>
     </div>
 
+    <!-- Signup -->
     <div class="auth-container" id="signup-box" style="display:none;">
-      <h2>Create Workspace</h2>
-      <p>Deploy your own SlothOps automation</p>
+      <h2>Create workspace</h2>
+      <p>Set up your automation pipeline in 60 seconds</p>
       <form id="signup-form">
-        <div class="form-group"><label>Workspace Name</label><input type="text" id="signup-workspace" required
-            placeholder="Acme Corp"></div>
-        <div class="form-group"><label>Email</label><input type="email" id="signup-email" required></div>
-        <div class="form-group"><label>Password</label><input type="password" id="signup-pass" required></div>
-        <button type="submit" class="btn">Start Automating</button>
+        <div class="form-group">
+          <label for="signup-workspace">Workspace Name</label>
+          <input type="text" id="signup-workspace" placeholder="Acme Corp" required>
+        </div>
+        <div class="form-group">
+          <label for="signup-email">Email</label>
+          <input type="email" id="signup-email" placeholder="you@company.com" required>
+        </div>
+        <div class="form-group">
+          <label for="signup-pass">Password</label>
+          <input type="password" id="signup-pass" placeholder="Create a strong password" required>
+        </div>
+        <button type="submit" class="btn-primary">Get Started</button>
         <div class="auth-error" id="signup-error"></div>
       </form>
-      <div class="auth-toggle">Already have an account? <span id="to-login">Sign In</span></div>
+      <div class="auth-toggle">Already have an account? <span id="to-login">Sign in</span></div>
     </div>
 
+    <!-- Public Sentry Setup CTA -->
     <div class="public-setup-cta">
-      <button id="btn-public-sentry-setup" class="btn"><i class="fa-solid fa-wand-magic-sparkles"></i> Set Up Sentry For
-        Your Project</button>
-      <p>Copy the right prompt for your stack, paste into your AI agent, and bootstrap Sentry quickly.</p>
+      <button id="btn-public-sentry-setup" class="btn-primary" style="width:auto; display:inline-flex; align-items:center; gap:0.5rem; padding:0.625rem 1.25rem;">
+        <i class="fa-solid fa-wand-magic-sparkles"></i> Set Up Sentry For Your Project
+      </button>
+      <p>Copy an AI-ready prompt for your stack, paste it into your coding agent, and bootstrap Sentry in minutes.</p>
     </div>
   </div>
 
-  <main id="dashboard-view" class="max-w-[1440px] mx-auto px-4 lg:px-8 py-6" style="display:none;">
-    <div class="mb-4 flex items-end justify-between gap-3">
-      <div>
-        <h2 class="text-xl font-semibold tracking-tight">Active Issues</h2>
-        <p class="text-sm text-slate-400">Dual-pane incident response view with live issue states and runtime logs.</p>
+  <!-- ═══════════════════════════════════════════════════════════════
+       DASHBOARD VIEW
+       ═══════════════════════════════════════════════════════════════ -->
+  <main id="dashboard-view" class="dashboard-content" style="display:none;">
+
+    <!-- Integration Status Bar -->
+    <div id="integration-status-bar" class="integration-bar">
+      <div class="intg-card" id="intg-github">
+        <div class="intg-icon"><i class="fa-brands fa-github"></i></div>
+        <div class="intg-info">
+          <h4>GitHub App</h4>
+          <p id="intg-github-status">Checking…</p>
+          <div id="intg-github-repos" class="intg-repos"></div>
+        </div>
+      </div>
+      <div class="intg-card" id="intg-llm">
+        <div class="intg-icon"><i class="fa-solid fa-robot"></i></div>
+        <div class="intg-info">
+          <h4>LLM Agent</h4>
+          <p id="intg-llm-status">Checking…</p>
+          <p id="intg-llm-detail" class="intg-detail"></p>
+        </div>
+        <button id="btn-check-llm" class="tray-btn" title="Run LLM health check"><i class="fa-solid fa-arrows-rotate"></i></button>
+      </div>
+      <div class="intg-card" id="intg-engine">
+        <div class="intg-icon"><i class="fa-solid fa-server"></i></div>
+        <div class="intg-info">
+          <h4>Engine</h4>
+          <p id="intg-engine-status">Running</p>
+        </div>
       </div>
     </div>
 
-    <div class="mb-6 flex gap-3 border-b border-slate-700/70 pb-2">
-      <button id="tab-issues"
-        class="bg-indigo-600 text-white border-none px-4 py-2 rounded font-semibold cursor-pointer">Issues
-        Engine</button>
-      <button id="tab-qa"
-        class="bg-transparent text-slate-400 border border-slate-700 px-4 py-2 rounded cursor-pointer hover:bg-slate-800">QA
-        Pipeline</button>
+    <div class="section-header">
+      <h2>Active Issues</h2>
+      <p>Real-time incident response with live issue tracking and engine logs.</p>
     </div>
 
+    <!-- Tabs -->
+    <div class="tab-bar">
+      <button id="tab-issues" class="tab-btn is-active">Issues Engine</button>
+      <button id="tab-qa" class="tab-btn">QA Pipeline</button>
+    </div>
+
+    <!-- Two-column layout -->
     <div class="dashboard-grid">
+
+      <!-- LEFT: Issues / QA Panel -->
       <section class="panel issues-panel">
         <div id="empty-state" class="empty-state">
-          <i class="fa-solid fa-check-circle fa-2x"></i>
+          <i class="fa-solid fa-check-circle"></i>
           <p>No issues detected</p>
-          <span>Connect Sentry from the utility tray to stream production exceptions.</span>
+          <span>Connect Sentry from Integrations to start streaming production exceptions.</span>
         </div>
         <div id="issues-feed" class="issues-feed"></div>
 
-        <!-- Rollbacks Feed Section -->
+        <!-- Rollbacks section -->
         <div id="rollbacks-section" style="display: none;">
-          <div class="dashboard-header" style="margin-top: 3rem; margin-bottom: 1rem;">
-            <h2 class="text-lg font-semibold tracking-tight"><i class="fa-solid fa-clock-rotate-left"></i> Production
-              Rollbacks</h2>
-            <p class="text-sm text-slate-400">Automated safety-net events protecting your main branch.</p>
+          <div class="dashboard-header" style="margin-top: 2rem; margin-bottom: 0.75rem;">
+            <h2><i class="fa-solid fa-clock-rotate-left"></i> Production Rollbacks</h2>
+            <p>Automated safety-net events protecting your main branch.</p>
           </div>
           <div id="rollbacks-feed" class="issues-feed"></div>
         </div>
 
-        <!-- QA Feed Container -->
+        <!-- QA Feed -->
         <div id="qa-feed" class="issues-feed" style="display:none; flex-direction: column;">
-          <div id="qa-config-hint" class="bg-indigo-900/20 border border-indigo-500/30 rounded-xl p-4 mb-2">
-            <div class="flex items-center gap-2 mb-2">
-              <i class="fa-solid fa-lightbulb text-amber-400"></i>
-              <strong class="text-sm">Optional: Add a <code>.slothops.yml</code> to your repo root</strong>
+          <div id="qa-config-hint" class="qa-config-hint" style="margin-bottom: 0.5rem;">
+            <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.4rem;">
+              <i class="fa-solid fa-lightbulb" style="color:#fbbf24;"></i>
+              <strong>Optional: Add a <code>.slothops.yml</code> to your repo root</strong>
             </div>
-            <pre class="bg-black/35 p-3 rounded-lg text-xs text-slate-200 overflow-x-auto mb-2 leading-relaxed">stack: node
+            <pre>stack: node
 start: npm start
 test: npm test
 lint: npx eslint .
 port: 3000</pre>
-            <p class="text-xs text-slate-400 m-0">This is <strong>not mandatory</strong> — SlothOps auto-detects your
-              stack. But providing a config gives you full control over which tools run.</p>
+            <p>This is <strong>not mandatory</strong> — SlothOps auto-detects your stack. The config gives you explicit
+              control over which tools run.</p>
           </div>
         </div>
       </section>
 
+      <!-- RIGHT: Live Engine Terminal -->
       <section class="panel live-logs" id="live-logs">
         <div class="live-logs-header scanline">
           <h3><i class="fa-solid fa-terminal"></i> Engine Terminal</h3>
@@ -171,53 +227,62 @@ port: 3000</pre>
     </div>
   </main>
 
+  <!-- ═══════════════════════════════════════════════════════════════
+       MODAL: Sentry Integration Settings
+       ═══════════════════════════════════════════════════════════════ -->
   <div class="modal-overlay" id="settings-modal">
     <div class="modal">
       <h3><i class="fa-solid fa-plug"></i> Sentry Integration</h3>
-      <p style="color: var(--text-secondary); font-size: 0.9rem;">To pipe errors into your dedicated tenant environment,
-        copy this custom Webhook URL and paste it into your Sentry Project's <strong>Webhook Integration</strong>
-        plugin.</p>
+      <p style="color: var(--text-secondary); font-size: 0.8125rem; line-height:1.5;">
+        Copy this webhook URL and paste it into your Sentry project's
+        <strong>Webhook Integration</strong> plugin to pipe errors into your tenant environment.
+      </p>
       <div class="code-block" id="webhook-url"></div>
-      <p style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 1rem;">
-        <strong>Workspace ID: </strong> <span id="workspace-id-display" style="font-family: var(--font-mono)"></span>
+      <p style="color: var(--text-secondary); font-size: 0.8125rem; margin-top: 0.75rem;">
+        <strong>Workspace ID:</strong>
+        <span id="workspace-id-display" style="font-family: var(--font-mono); color: var(--brand-secondary);"></span>
       </p>
 
-      <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color);">
-        <h3><i class="fa-brands fa-github"></i> GitHub App Access</h3>
-        <p style="color: var(--text-secondary); font-size: 0.9rem;">Authorize SlothOps to pull syntax context and create
-          Pull Requests.</p>
-        <div style="margin-top: 1rem;">
-          <a href="https://github.com/apps/slothops-bot/installations/select_target" target="_self" class="btn"
-            style="text-decoration: none; display: inline-block; background: #2ea043; color: white;"><i
-              class="fa-brands fa-github"></i> Install on GitHub</a>
-        </div>
-        <p style="color: #22c55e; font-size: 0.85rem; margin-top: 0.5rem; display: none;" id="github-success-msg"><i
-            class="fa-solid fa-check"></i> Linked GitHub Installation!</p>
+      <!-- GitHub App -->
+      <div class="modal-section">
+        <h3><i class="fa-brands fa-github"></i> GitHub App</h3>
+        <p>Authorize SlothOps to pull source context and create Pull Requests on your repositories.</p>
+        <a href="https://github.com/apps/slothops-bot/installations/select_target" target="_self"
+          class="github-install-btn">
+          <i class="fa-brands fa-github"></i> Install GitHub App
+        </a>
+        <p id="github-success-msg"
+          style="color: var(--success); font-size: 0.8125rem; margin-top: 0.5rem; display: none;">
+          <i class="fa-solid fa-check"></i> Successfully linked GitHub installation
+        </p>
       </div>
 
-      <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border-color);">
-        <h3><i class="fa-solid fa-code"></i> Developer Code Rules</h3>
-        <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 0.5rem;">Configure code style rules
-          for AI-generated fixes (<code>developer.json</code>).</p>
-        <textarea id="dev-config-json" rows="6"
-          style="width: 100%; width: -moz-available; width: -webkit-fill-available; background: var(--panel-bg); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; padding: 0.5rem; font-family: var(--mono); font-size: 0.85rem;"
-          placeholder='{&#10;  "frontend": { "styling": "Tailwind CSS only" }&#10;}'></textarea>
+      <!-- Developer Config -->
+      <div class="modal-section">
+        <h3><i class="fa-solid fa-code"></i> Code Style Rules</h3>
+        <p style="margin-bottom: 0.5rem;">Configure code style preferences for AI-generated fixes (<code
+            style="background:var(--bg-card); padding:0.125rem 0.35rem; border-radius:4px; font-size:0.8125rem;">developer.json</code>).</p>
+        <textarea id="dev-config-json" class="config-textarea" rows="5"
+          placeholder='{"frontend": {"styling": "Tailwind CSS only"}}'></textarea>
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem;">
-          <span id="dev-config-status" style="font-size: 0.85rem; color: #22c55e;"></span>
-          <button id="btn-save-dev-config" class="btn" style="width: auto; padding: 0.4rem 1rem;">Save Config</button>
+          <span id="dev-config-status" style="font-size: 0.8125rem; color: var(--success);"></span>
+          <button id="btn-save-dev-config" class="action-btn" style="gap:0.35rem;">Save Config</button>
         </div>
       </div>
 
-      <button class="btn modal-close" id="close-settings" style="margin-top: 2rem; width: 100%;">Close Settings</button>
+      <button class="btn modal-close" id="close-settings"
+        style="margin-top: 1.5rem; width: 100%;">Close</button>
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════════════
+       MODAL: Sentry Setup Prompt Studio
+       ═══════════════════════════════════════════════════════════════ -->
   <div class="modal-overlay" id="sentry-setup-modal">
     <div class="modal sentry-setup-modal">
       <div class="sentry-modal-header">
-        <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Sentry Setup Prompt Studio</h3>
-        <p>Copy a prompt, paste it into your AI coding agent in your own project, and let it wire up Sentry in minutes.
-        </p>
+        <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Sentry Setup Studio</h3>
+        <p>Copy the prompt for your stack, paste it into your AI coding agent, and have Sentry wired up in minutes.</p>
       </div>
 
       <div class="sentry-framework-grid">
@@ -229,7 +294,7 @@ port: 3000</pre>
           <pre class="prompt-block"
             id="prompt-nextjs">Use curl to download, read and follow: https://skills.sentry.dev/sentry-nextjs-sdk/SKILL.md</pre>
           <a class="framework-doc-link" href="https://docs.sentry.io/platforms/javascript/guides/nextjs/"
-            target="_blank" rel="noopener noreferrer">Open Next.js Docs</a>
+            target="_blank" rel="noopener noreferrer">Open Next.js Docs →</a>
         </article>
 
         <article class="framework-card" data-framework="nodejs">
@@ -240,7 +305,7 @@ port: 3000</pre>
           <pre class="prompt-block"
             id="prompt-nodejs">Use curl to download, read and follow: https://skills.sentry.dev/sentry-node-sdk/SKILL.md</pre>
           <a class="framework-doc-link" href="https://docs.sentry.io/platforms/javascript/guides/node/" target="_blank"
-            rel="noopener noreferrer">Open Node.js Docs</a>
+            rel="noopener noreferrer">Open Node.js Docs →</a>
         </article>
 
         <article class="framework-card" data-framework="react">
@@ -251,7 +316,7 @@ port: 3000</pre>
           <pre class="prompt-block"
             id="prompt-react">Use curl to download, read and follow: https://skills.sentry.dev/sentry-react-sdk/SKILL.md</pre>
           <a class="framework-doc-link" href="https://docs.sentry.io/platforms/javascript/guides/react/" target="_blank"
-            rel="noopener noreferrer">Open React Docs</a>
+            rel="noopener noreferrer">Open React Docs →</a>
         </article>
 
         <article class="framework-card" data-framework="python">
@@ -262,7 +327,7 @@ port: 3000</pre>
           <pre class="prompt-block"
             id="prompt-python">Use curl to download, read and follow: https://skills.sentry.dev/sentry-python-sdk/SKILL.md</pre>
           <a class="framework-doc-link" href="https://docs.sentry.io/platforms/python/" target="_blank"
-            rel="noopener noreferrer">Open Python Docs</a>
+            rel="noopener noreferrer">Open Python Docs →</a>
         </article>
 
         <article class="framework-card" data-framework="react-native">
@@ -273,7 +338,7 @@ port: 3000</pre>
           <pre class="prompt-block"
             id="prompt-react-native">Use curl to download, read and follow: https://skills.sentry.dev/sentry-react-native-sdk/SKILL.md</pre>
           <a class="framework-doc-link" href="https://docs.sentry.io/platforms/react-native/" target="_blank"
-            rel="noopener noreferrer">Open React Native Docs</a>
+            rel="noopener noreferrer">Open React Native Docs →</a>
         </article>
 
         <article class="framework-card" data-framework="android">
@@ -284,7 +349,7 @@ port: 3000</pre>
           <pre class="prompt-block"
             id="prompt-android">Use curl to download, read and follow: https://skills.sentry.dev/sentry-android-sdk/SKILL.md</pre>
           <a class="framework-doc-link" href="https://docs.sentry.io/platforms/android/" target="_blank"
-            rel="noopener noreferrer">Open Android Docs</a>
+            rel="noopener noreferrer">Open Android Docs →</a>
         </article>
 
         <article class="framework-card" data-framework="dart">
@@ -295,7 +360,7 @@ port: 3000</pre>
           <pre class="prompt-block"
             id="prompt-dart">Use curl to download, read and follow: https://skills.sentry.dev/sentry-flutter-sdk/SKILL.md</pre>
           <a class="framework-doc-link" href="https://docs.sentry.io/platforms/dart/guides/flutter/" target="_blank"
-            rel="noopener noreferrer">Open Dart/Flutter Docs</a>
+            rel="noopener noreferrer">Open Dart/Flutter Docs →</a>
         </article>
 
         <article class="framework-card" data-framework="javascript">
@@ -306,52 +371,62 @@ port: 3000</pre>
           <pre class="prompt-block"
             id="prompt-javascript">Use curl to download, read and follow: https://skills.sentry.dev/</pre>
           <a class="framework-doc-link" href="https://docs.sentry.io" target="_blank" rel="noopener noreferrer">Open
-            Sentry Docs</a>
+            Sentry Docs →</a>
         </article>
       </div>
 
       <div class="sentry-modal-footer">
-        <p>For full setup options and manual steps, visit <a href="https://docs.sentry.io" target="_blank"
+        <p>For manual setup and full configuration options, visit <a href="https://docs.sentry.io" target="_blank"
             rel="noopener noreferrer">docs.sentry.io</a>.</p>
-        <button class="btn modal-close" id="close-sentry-setup" style="margin-top: 1rem; width: 100%;">Close Prompt
-          Studio</button>
+        <button class="btn modal-close" id="close-sentry-setup" style="margin-top: 0.75rem; width: 100%;">Close Studio</button>
       </div>
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════════════
+       MODAL: QA Report Detail
+       ═══════════════════════════════════════════════════════════════ -->
   <div class="modal-overlay" id="qa-detail-modal" style="display:none;">
-    <div class="modal" style="max-width: 720px; max-height: 85vh; overflow-y: auto;">
+    <div class="modal" style="max-width: 700px; max-height: 85vh; overflow-y: auto;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
         <h3 id="qa-detail-title"><i class="fa-solid fa-clipboard-check"></i> QA Report Detail</h3>
         <div id="qa-detail-status-badge"
-          style="font-weight: 600; font-size: 0.85rem; padding: 0.25rem 0.75rem; border-radius: 999px;"></div>
-      </div>
-      <p style="color: var(--text-secondary, #94a3b8); font-size: 0.85rem; margin-bottom: 1.25rem;" id="qa-detail-meta">
-      </p>
-
-      <div id="qa-detail-agents" style="display: flex; flex-direction: column; gap: 0.75rem;"></div>
-
-      <div id="qa-detail-ai-fix"
-        style="display: none; margin-top: 1.25rem; padding: 1rem; background: rgba(139,92,246,0.08); border: 1px solid rgba(139,92,246,0.25); border-radius: 10px;">
-        <h4 style="color: #a78bfa; margin-bottom: 0.5rem;"><i class="fa-solid fa-robot"></i> AI Fix Recommendation</h4>
-        <div id="qa-detail-ai-fix-content"
-          style="font-size: 0.85rem; color: var(--text-secondary, #94a3b8); white-space: pre-wrap; line-height: 1.5;">
+          style="font-weight: 600; font-size: 0.8125rem; padding: 0.25rem 0.75rem; border-radius: var(--radius-full);">
         </div>
       </div>
+      <p style="color: var(--text-secondary); font-size: 0.8125rem; margin-bottom: 1rem;" id="qa-detail-meta"></p>
 
-      <div style="display: flex; gap: 0.75rem; margin-top: 1.5rem;">
+      <div id="qa-detail-agents" style="display: flex; flex-direction: column; gap: 0.5rem;"></div>
+
+      <div id="qa-detail-ai-fix"
+        style="display: none; margin-top: 1rem; padding: 0.875rem; background: var(--purple-soft); border: 1px solid var(--purple-border); border-radius: var(--radius-md);">
+        <h4 style="color: var(--purple); margin-bottom: 0.375rem; font-size: 0.875rem;"><i
+            class="fa-solid fa-robot"></i> AI Fix
+          Recommendation</h4>
+        <div id="qa-detail-ai-fix-content"
+          style="font-size: 0.8125rem; color: var(--text-secondary); white-space: pre-wrap; line-height: 1.5;"></div>
+      </div>
+
+      <div style="display: flex; gap: 0.5rem; margin-top: 1.25rem;">
+        <button class="btn" id="qa-detail-resolve-btn"
+          style="background: var(--brand-primary); color: white; flex: 1; display: none;">
+          <i class="fa-solid fa-wand-magic-sparkles"></i> Resolve QA</button>
         <button class="btn" id="qa-detail-bypass-btn"
-          style="background: var(--panel-bg, #1e293b); border: 1px solid var(--border-color, #334155); color: var(--text-secondary, #94a3b8); flex: 1; display: none;"><i
-            class="fa-solid fa-forward"></i> Bypass QA</button>
+          style="background: var(--bg-card); border: 1px solid var(--border-default); color: var(--text-secondary); flex: 1; display: none;">
+          <i class="fa-solid fa-forward"></i> Bypass QA</button>
         <a id="qa-detail-pr-link" href="#" target="_blank" class="btn"
-          style="background: #2ea043; color: white; flex: 1; text-align: center; text-decoration: none; display: none;"><i
-            class="fa-brands fa-github"></i> View PR</a>
+          style="background: #238636; color: white; flex: 1; text-align: center; text-decoration: none; display: none;">
+          <i class="fa-brands fa-github"></i> View PR</a>
         <button class="btn modal-close" id="close-qa-detail" style="flex: 1;">Close</button>
       </div>
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════════════
+       APPLICATION LOGIC
+       ═══════════════════════════════════════════════════════════════ -->
   <script>
+    /* ── DOM References ─────────────────────────────────────────────── */
     const authView = document.getElementById('auth-view');
     const dashboardView = document.getElementById('dashboard-view');
     const loginBox = document.getElementById('login-box');
@@ -380,11 +455,11 @@ port: 3000</pre>
     const qaFeed = document.getElementById('qa-feed');
     const qaDetailModal = document.getElementById('qa-detail-modal');
 
+    /* ── Tab switching ──────────────────────────────────────────────── */
     if (tabIssues && tabQA) {
       tabIssues.onclick = () => {
-        tabIssues.className = 'bg-indigo-600 text-white border-none px-4 py-2 rounded font-semibold cursor-pointer';
-        tabQA.className = 'bg-transparent text-slate-400 border border-slate-700 px-4 py-2 rounded cursor-pointer hover:bg-slate-800';
-
+        tabIssues.classList.add('is-active');
+        tabQA.classList.remove('is-active');
         feed.style.display = '';
         if (rollbacksSection) rollbacksSection.style.display = '';
         qaFeed.style.display = 'none';
@@ -392,20 +467,18 @@ port: 3000</pre>
       };
 
       tabQA.onclick = () => {
-        tabQA.className = 'bg-indigo-600 text-white border-none px-4 py-2 rounded font-semibold cursor-pointer';
-        tabIssues.className = 'bg-transparent text-slate-400 border border-slate-700 px-4 py-2 rounded cursor-pointer hover:bg-slate-800';
-
+        tabQA.classList.add('is-active');
+        tabIssues.classList.remove('is-active');
         feed.style.display = 'none';
         if (rollbacksSection) rollbacksSection.style.display = 'none';
         qaFeed.style.display = 'flex';
         emptyState.style.display = qaFeed.children.length > 1 ? 'none' : 'flex';
-
         loadQAReports();
       };
-      // init view
       if (rollbacksSection) rollbacksSection.style.display = '';
     }
 
+    /* ── UI Interactions ────────────────────────────────────────────── */
     document.getElementById('to-signup').onclick = () => { loginBox.style.display = 'none'; signupBox.style.display = 'block'; };
     document.getElementById('to-login').onclick = () => { signupBox.style.display = 'none'; loginBox.style.display = 'block'; };
     document.getElementById('btn-settings').onclick = () => { settingsModal.style.display = 'flex'; };
@@ -425,9 +498,7 @@ port: 3000</pre>
       window.location.reload();
     };
 
-    clearLogsBtn.onclick = () => {
-      logFeed.innerHTML = '';
-    };
+    clearLogsBtn.onclick = () => { logFeed.innerHTML = ''; };
 
     settingsModal.onclick = (event) => {
       if (event.target === settingsModal) settingsModal.style.display = 'none';
@@ -444,23 +515,25 @@ port: 3000</pre>
       }
     });
 
+    /* ── Copy prompt buttons ────────────────────────────────────────── */
     document.querySelectorAll('.copy-prompt-btn').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const targetId = btn.dataset.copyTarget;
         const promptText = document.getElementById(targetId)?.innerText || '';
         if (!promptText) return;
-
         const original = btn.innerText;
         try {
           await navigator.clipboard.writeText(promptText);
-          btn.innerText = 'Copied';
+          btn.innerText = 'Copied!';
+          btn.style.color = 'var(--success)';
         } catch (e) {
-          btn.innerText = 'Copy Failed';
+          btn.innerText = 'Failed';
         }
-        setTimeout(() => { btn.innerText = original; }, 1300);
+        setTimeout(() => { btn.innerText = original; btn.style.color = ''; }, 1500);
       });
     });
 
+    /* ── Status Map ─────────────────────────────────────────────────── */
     const STATUS_MAP = {
       'received': { label: 'Ingested', icon: 'fa-inbox', color: 'blue', step: 1 },
       'triaging': { label: 'Redacted', icon: 'fa-user-shield', color: 'amber', step: 2 },
@@ -477,21 +550,21 @@ port: 3000</pre>
 
     const STEP_LABELS = ['Ingested', 'Redacted', 'Classified', 'LLM Fixing', 'PR Created'];
 
+    /* ── Resolutions HTML ───────────────────────────────────────────── */
     function renderResolutionsHtml(resolutions) {
       if (!resolutions || resolutions.length === 0) return '';
-      let html = '<div style="margin-top:0.75rem; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 0.75rem;">';
-      html += '<p style="font-size:0.8rem; font-weight:bold; color:var(--text-secondary, #94a3b8); margin-bottom: 0.5rem;"><i class="fa-solid fa-wand-magic-sparkles"></i> Auto-Resolutions</p>';
+      let html = '<div style="margin-top:0.625rem; border-top: 1px solid var(--border-subtle); padding-top: 0.625rem;">';
+      html += '<p style="font-size:0.75rem; font-weight:600; color:var(--text-secondary); margin-bottom: 0.375rem;"><i class="fa-solid fa-wand-magic-sparkles"></i> Auto-Resolutions</p>';
       resolutions.forEach(res => {
         const st = res.status || 'pending';
-        let c = '#94a3b8'; let i = 'fa-circle-notch fa-spin';
-        if (st === 'build_passed') { c = '#10b981'; i = 'fa-check'; }
-        else if (st === 'build_failed' || st === 'abandoned') { c = '#ef4444'; i = 'fa-xmark'; }
-        else if (st === 'pr_opened' || st === 'fix_pushed') { c = '#3b82f6'; i = 'fa-code-pull-request'; }
-
-        const pr = res.resolution_pr_url ? `<a href="${res.resolution_pr_url}" target="_blank" style="color:#3b82f6;text-decoration:none;margin-left:0.5rem;"><i class="fa-brands fa-github"></i> PR #${res.resolution_pr_number}</a>` : '';
-        html += `<div style="font-size:0.8rem; margin-bottom:0.25rem;">
-                <span class="badge" style="background:${c}22;color:${c};padding:0.15rem 0.4rem;font-size:0.75rem;"><i class="fa-solid ${i}"></i> Attempt ${res.attempt_number}</span>
-                <span style="color:var(--text-primary, #f8fafc); margin-left:0.5rem;">${st.replace('_', ' ').toUpperCase()}</span>
+        let c = 'var(--text-secondary)'; let i = 'fa-circle-notch fa-spin';
+        if (st === 'build_passed') { c = 'var(--success)'; i = 'fa-check'; }
+        else if (st === 'build_failed' || st === 'abandoned') { c = 'var(--danger)'; i = 'fa-xmark'; }
+        else if (st === 'pr_opened' || st === 'fix_pushed') { c = 'var(--info)'; i = 'fa-code-pull-request'; }
+        const pr = res.resolution_pr_url ? `<a href="${res.resolution_pr_url}" target="_blank" style="color:var(--info);text-decoration:none;margin-left:0.5rem;"><i class="fa-brands fa-github"></i> PR #${res.resolution_pr_number}</a>` : '';
+        html += `<div style="font-size:0.75rem; margin-bottom:0.25rem;">
+                <span class="badge" style="background:${c}15;color:${c};padding:0.125rem 0.4rem;font-size:0.6875rem;"><i class="fa-solid ${i}"></i> Attempt ${res.attempt_number}</span>
+                <span style="color:var(--text-primary); margin-left:0.375rem;">${st.replace('_', ' ').toUpperCase()}</span>
                 ${pr}
             </div>`;
       });
@@ -499,36 +572,34 @@ port: 3000</pre>
       return html;
     }
 
+    /* ── Rollback Card ──────────────────────────────────────────────── */
     function createRollbackCard(rb) {
       const card = document.createElement('div');
       card.className = 'issue-card slide-in';
       card.id = `rollback-${rb.id}`;
-
       const st = (rb.status || 'pending').toLowerCase();
       const color = st === 'completed' ? 'green' : (st === 'failed' ? 'red' : 'amber');
       const icon = st === 'completed' ? 'fa-check' : (st === 'failed' ? 'fa-xmark' : 'fa-circle-notch fa-spin');
-
       const prLink = rb.pr_url ? `<a href="${rb.pr_url}" target="_blank" class="pr-link"><i class="fa-brands fa-github"></i> PR #${rb.pr_number}</a>` : '';
-
       card.innerHTML = `
-        <div class="card-header" style="border-left: 4px solid var(--${color === 'green' ? 'success' : (color === 'red' ? 'danger' : 'warning')}-color, ${color});">
+        <div class="card-header">
           <div class="card-title">
-            <span class="error-type" style="color:#ef4444;"><i class="fa-solid fa-backward-step"></i> Auto-Rollback</span>
-            <span style="font-size:0.8rem;color:var(--text-secondary, #94a3b8);margin-left:0.5rem;">${rb.repo_name}</span>
+            <span class="error-type" style="color:var(--danger);"><i class="fa-solid fa-backward-step"></i> Auto-Rollback</span>
+            <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:0.25rem;">${rb.repo_name}</span>
           </div>
           <div class="card-status status-${color}">
             <i class="fa-solid ${icon}"></i><span>${st.toUpperCase()}</span>
           </div>
         </div>
         <div class="card-body">
-          <p class="error-msg" style="margin-bottom:0.5rem;"><strong>Reverted Bad Commit:</strong> <code style="padding:0.15rem 0.35rem;background:rgba(239,68,68,0.15);color:#ef4444;border-radius:4px;">${(rb.failed_commit_sha || '').substring(0, 8)}</code></p>
-          <p class="error-msg" style="font-size:0.85rem;color:var(--text-secondary, #94a3b8);">Reason: ${rb.failure_reason}</p>
-          ${rb.backup_branch ? `<p class="location" style="margin-top:0.75rem;"><i class="fa-solid fa-code-branch"></i> Backup Branch: <code style="color:var(--brand-color, #6366f1);">${rb.backup_branch}</code></p>` : ''}
+          <p class="error-msg" style="margin-bottom:0.375rem;"><strong>Reverted:</strong> <code style="padding:0.125rem 0.3rem;background:var(--danger-soft);color:var(--danger);border-radius:4px;font-family:var(--font-mono);font-size:0.8125rem;">${(rb.failed_commit_sha || '').substring(0, 8)}</code></p>
+          <p class="error-msg">${rb.failure_reason}</p>
+          ${rb.backup_branch ? `<p class="location" style="margin-top:0.5rem;"><i class="fa-solid fa-code-branch"></i> ${rb.backup_branch}</p>` : ''}
           <div class="resolutions-container">${renderResolutionsHtml(rb.resolutions)}</div>
         </div>
-        <div class="card-footer" style="padding-top: 0.75rem;">
+        <div class="card-footer">
           <div class="badges"></div>
-          <div class="actions" style="gap: 0.75rem;">
+          <div class="actions">
             ${prLink}
             <span class="time">${formatTime(rb.created_at)}</span>
           </div>
@@ -541,23 +612,22 @@ port: 3000</pre>
       const st = (rb.status || 'pending').toLowerCase();
       const color = st === 'completed' ? 'green' : (st === 'failed' ? 'red' : 'amber');
       const icon = st === 'completed' ? 'fa-check' : (st === 'failed' ? 'fa-xmark' : 'fa-circle-notch fa-spin');
-
       const statusContainer = card.querySelector('.card-status');
       statusContainer.className = `card-status status-${color}`;
       statusContainer.innerHTML = `<i class="fa-solid ${icon}"></i><span>${st.toUpperCase()}</span>`;
-
       const resContainer = card.querySelector('.resolutions-container');
-      if (resContainer) {
-        resContainer.innerHTML = renderResolutionsHtml(rb.resolutions);
-      }
+      if (resContainer) resContainer.innerHTML = renderResolutionsHtml(rb.resolutions);
     }
 
+    /* ── QA Cards ───────────────────────────────────────────────────── */
     function qaStatusColor(st) {
-      if (st === 'passed') return { color: 'green', icon: 'fa-check-circle', bg: 'rgba(16,185,129,0.12)' };
-      if (st === 'failed') return { color: 'red', icon: 'fa-times-circle', bg: 'rgba(239,68,68,0.12)' };
-      if (st === 'warning') return { color: 'yellow', icon: 'fa-exclamation-triangle', bg: 'rgba(245,158,11,0.12)' };
-      if (st === 'bypassed') return { color: 'blue', icon: 'fa-forward-step', bg: 'rgba(59,130,246,0.12)' };
-      return { color: 'gray', icon: 'fa-circle-notch', bg: 'rgba(148,163,184,0.12)' };
+      if (st === 'passed') return { color: 'green', icon: 'fa-check-circle', bg: 'var(--success-soft)' };
+      if (st === 'failed') return { color: 'red', icon: 'fa-times-circle', bg: 'var(--danger-soft)' };
+      if (st === 'warning') return { color: 'yellow', icon: 'fa-exclamation-triangle', bg: 'var(--warning-soft)' };
+      if (st === 'bypassed') return { color: 'blue', icon: 'fa-forward-step', bg: 'var(--info-soft)' };
+      if (st === 'resolving') return { color: 'purple', icon: 'fa-spinner fa-spin', bg: 'var(--purple-soft)' };
+      if (st === 'resolved') return { color: 'green', icon: 'fa-wrench', bg: 'var(--success-soft)' };
+      return { color: 'gray', icon: 'fa-circle-notch', bg: 'rgba(255,255,255,0.04)' };
     }
 
     function createQACard(report) {
@@ -566,9 +636,7 @@ port: 3000</pre>
       card.id = `qa-${report.id}`;
       card.style.cursor = 'pointer';
       card.onclick = () => openQADetail(report.id);
-
       const s = qaStatusColor(report.overall_status);
-
       const agents = [
         { key: 'static_analysis', label: 'Static' },
         { key: 'functionality', label: 'Tests' },
@@ -582,29 +650,27 @@ port: 3000</pre>
         const d = report[a.key];
         if (!d) return;
         const st = d.status || 'unknown';
-        const c = st === 'passed' ? '#10b981' : st === 'warning' ? '#f59e0b' : st === 'failed' ? '#ef4444' : '#94a3b8';
-        agentBadges += `<span style="display:inline-flex;align-items:center;gap:0.25rem;font-size:0.72rem;padding:0.15rem 0.5rem;border-radius:999px;background:${c}22;color:${c};border:1px solid ${c}44;">${a.label}</span>`;
+        const c = st === 'passed' ? 'var(--success)' : st === 'warning' ? 'var(--warning)' : st === 'failed' ? 'var(--danger)' : 'var(--text-secondary)';
+        agentBadges += `<span style="display:inline-flex;align-items:center;gap:0.2rem;font-size:0.6875rem;padding:0.125rem 0.4rem;border-radius:var(--radius-full);background:${c}15;color:${c};border:1px solid ${c}30;">${a.label}</span>`;
       });
-
       const prLink = report.pr_url ? `<a href="${report.pr_url}" target="_blank" class="pr-link" onclick="event.stopPropagation()"><i class="fa-brands fa-github"></i> PR</a>` : '';
-
       card.innerHTML = `
         <div class="card-header">
           <div class="card-title">
-            <span class="error-type">PR #${report.pr_number}</span>
-            <span style="font-size:0.8rem;color:var(--text-secondary, #94a3b8);margin-left:0.5rem;">${report.repo_name}</span>
+            <span class="error-type" style="color:var(--brand-secondary);">PR #${report.pr_number}</span>
+            <span style="font-size:0.75rem;color:var(--text-secondary);margin-left:0.25rem;">${report.repo_name}</span>
           </div>
           <div class="card-status status-${s.color}">
             <i class="fa-solid ${s.icon}"></i><span>${(report.overall_status || '').toUpperCase()}</span>
           </div>
         </div>
         <div class="card-body">
-          <p class="error-msg" style="font-family:var(--font-mono, monospace);font-size:0.82rem;">@ ${(report.commit_sha || '').substring(0, 8)}</p>
-          <div style="margin-top:0.65rem;display:flex;flex-wrap:wrap;gap:0.35rem;">${agentBadges}</div>
+          <p class="error-msg" style="font-family:var(--font-mono);font-size:0.8125rem;">@ ${(report.commit_sha || '').substring(0, 8)}</p>
+          <div style="margin-top:0.5rem;display:flex;flex-wrap:wrap;gap:0.25rem;">${agentBadges}</div>
         </div>
-        <div class="card-footer" style="padding-top: 0.75rem;">
+        <div class="card-footer">
           <div class="badges"></div>
-          <div class="actions" style="gap: 0.75rem;">
+          <div class="actions">
             ${prLink}
             <span class="time">${formatTime(report.created_at)}</span>
           </div>
@@ -613,10 +679,10 @@ port: 3000</pre>
       return card;
     }
 
+    /* ── QA Bypass ──────────────────────────────────────────────────── */
     async function bypassQA(reportId) {
       const reason = prompt("Enter reason for bypassing QA failures:");
       if (!reason) return;
-
       const token = localStorage.getItem('slothops_jwt');
       try {
         const res = await fetch(`/api/qa-bypass/${reportId}`, {
@@ -624,16 +690,44 @@ port: 3000</pre>
           headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ reason })
         });
+        if (res.ok) loadQAReports();
+        else alert("Failed to bypass QA.");
+      } catch (e) { console.error("Bypass failed", e); }
+    }
+
+    /* ── QA Resolve (AI Auto-Fix) ─────────────────────────────────── */
+    async function resolveQA(reportId) {
+      const resolveBtn = document.getElementById('qa-detail-resolve-btn');
+      resolveBtn.disabled = true;
+      resolveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Generating fixes...';
+
+      const token = localStorage.getItem('slothops_jwt');
+      try {
+        const res = await fetch(`/api/qa-resolve/${reportId}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
         if (res.ok) {
-          loadQAReports();
+          resolveBtn.innerHTML = '<i class="fa-solid fa-check"></i> Fixes pushed!';
+          resolveBtn.style.background = 'var(--success)';
+          setTimeout(() => {
+            loadQAReports();
+            if (qaDetailModal) qaDetailModal.style.display = 'none';
+          }, 1500);
         } else {
-          alert("Failed to bypass QA.");
+          const data = await res.json().catch(() => ({}));
+          alert(`Failed to resolve QA: ${data.detail || 'Unknown error'}`);
+          resolveBtn.disabled = false;
+          resolveBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Resolve QA';
         }
       } catch (e) {
-        console.error("Bypass failed", e);
+        console.error("Resolve failed", e);
+        resolveBtn.disabled = false;
+        resolveBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Resolve QA';
       }
     }
 
+    /* ── QA Detail Modal ────────────────────────────────────────────── */
     async function openQADetail(reportId) {
       const token = localStorage.getItem('slothops_jwt');
       try {
@@ -651,10 +745,10 @@ port: 3000</pre>
       const badge = document.getElementById('qa-detail-status-badge');
       badge.textContent = (r.overall_status || '').toUpperCase();
       badge.style.background = s.bg;
-      badge.style.color = { green: '#10b981', red: '#ef4444', yellow: '#f59e0b', blue: '#3b82f6', gray: '#94a3b8' }[s.color];
+      badge.style.color = { green: 'var(--success)', red: 'var(--danger)', yellow: 'var(--warning)', blue: 'var(--info)', gray: 'var(--text-secondary)' }[s.color];
 
       document.getElementById('qa-detail-meta').innerHTML = `
-        <strong>${r.repo_name}</strong> &nbsp;·&nbsp; Commit <code>${(r.commit_sha || '').substring(0, 8)}</code>
+        <strong>${r.repo_name}</strong> &nbsp;·&nbsp; Commit <code style="background:var(--bg-card);padding:0.125rem 0.35rem;border-radius:4px;font-family:var(--font-mono);">${(r.commit_sha || '').substring(0, 8)}</code>
         &nbsp;·&nbsp; ${new Date(r.created_at).toLocaleString()}
       `;
 
@@ -680,24 +774,24 @@ port: 3000</pre>
         if (a.key === 'static_analysis' && d.issues && d.issues.length > 0) {
           let issuesContent = '';
           d.issues.forEach(issue => {
-            issuesContent += `<div style="margin-bottom:0.5rem;"><strong>${issue.tool || 'Tool'}:</strong><pre style="background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;font-size:0.78rem;overflow-x:auto;margin-top:0.25rem;color:#e2e8f0;white-space:pre-wrap;">${escapeHtml(issue.output || 'No output')}</pre></div>`;
+            issuesContent += `<div style="margin-bottom:0.375rem;"><strong>${issue.tool || 'Tool'}:</strong><pre style="background:var(--bg-base);padding:0.5rem;border-radius:var(--radius-sm);font-size:0.75rem;overflow-x:auto;margin-top:0.25rem;color:var(--text-secondary);white-space:pre-wrap;border:1px solid var(--border-subtle);">${escapeHtml(issue.output || 'No output')}</pre></div>`;
           });
-          logsHtml = `<details style="margin-top:0.5rem;"><summary style="cursor:pointer;font-size:0.8rem;color:var(--brand-color, #6366f1);">View detailed logs</summary><div style="margin-top:0.5rem;">${issuesContent}</div></details>`;
+          logsHtml = `<details style="margin-top:0.375rem;"><summary style="cursor:pointer;font-size:0.75rem;color:var(--brand-secondary);font-weight:500;">View detailed logs</summary><div style="margin-top:0.375rem;">${issuesContent}</div></details>`;
         }
         if (d.logs && typeof d.logs === 'string') {
-          logsHtml = `<details style="margin-top:0.5rem;"><summary style="cursor:pointer;font-size:0.8rem;color:var(--brand-color, #6366f1);">View detailed logs</summary><pre style="background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;font-size:0.78rem;overflow-x:auto;margin-top:0.25rem;color:#e2e8f0;white-space:pre-wrap;max-height:200px;overflow-y:auto;">${escapeHtml(d.logs)}</pre></details>`;
+          logsHtml = `<details style="margin-top:0.375rem;"><summary style="cursor:pointer;font-size:0.75rem;color:var(--brand-secondary);font-weight:500;">View detailed logs</summary><pre style="background:var(--bg-base);padding:0.5rem;border-radius:var(--radius-sm);font-size:0.75rem;overflow-x:auto;margin-top:0.25rem;color:var(--text-secondary);white-space:pre-wrap;max-height:200px;overflow-y:auto;border:1px solid var(--border-subtle);">${escapeHtml(d.logs)}</pre></details>`;
         }
         if (d.failures) {
-          logsHtml += `<details style="margin-top:0.5rem;"><summary style="cursor:pointer;font-size:0.8rem;color:var(--brand-color, #6366f1);">View failures</summary><pre style="background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;font-size:0.78rem;overflow-x:auto;margin-top:0.25rem;color:#e2e8f0;white-space:pre-wrap;max-height:200px;overflow-y:auto;">${escapeHtml(typeof d.failures === 'string' ? d.failures : JSON.stringify(d.failures, null, 2))}</pre></details>`;
+          logsHtml += `<details style="margin-top:0.375rem;"><summary style="cursor:pointer;font-size:0.75rem;color:var(--brand-secondary);font-weight:500;">View failures</summary><pre style="background:var(--bg-base);padding:0.5rem;border-radius:var(--radius-sm);font-size:0.75rem;overflow-x:auto;margin-top:0.25rem;color:var(--text-secondary);white-space:pre-wrap;max-height:200px;overflow-y:auto;border:1px solid var(--border-subtle);">${escapeHtml(typeof d.failures === 'string' ? d.failures : JSON.stringify(d.failures, null, 2))}</pre></details>`;
         }
 
         container.innerHTML += `
-          <div style="padding:0.75rem 1rem;background:${sc.bg};border:1px solid ${badge.style.color}22;border-radius:10px;">
+          <div style="padding:0.75rem;background:${sc.bg};border:1px solid var(--border-subtle);border-radius:var(--radius-md);">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-              <span style="font-weight:600;font-size:0.88rem;"><i class="fa-solid ${a.icon}" style="margin-right:0.35rem;"></i>${a.label}</span>
-              <span style="font-size:0.8rem;">${emoji} ${st.toUpperCase()}</span>
+              <span style="font-weight:600;font-size:0.8125rem;"><i class="fa-solid ${a.icon}" style="margin-right:0.35rem;"></i>${a.label}</span>
+              <span style="font-size:0.75rem;">${emoji} ${st.toUpperCase()}</span>
             </div>
-            <p style="font-size:0.82rem;color:var(--text-secondary, #94a3b8);margin-top:0.35rem;">${d.summary || 'No summary.'}</p>
+            <p style="font-size:0.8125rem;color:var(--text-secondary);margin-top:0.25rem;">${d.summary || 'No summary.'}</p>
             ${logsHtml}
           </div>
         `;
@@ -715,6 +809,7 @@ port: 3000</pre>
       }
 
       const bypassBtn = document.getElementById('qa-detail-bypass-btn');
+      const resolveBtn = document.getElementById('qa-detail-resolve-btn');
       if (r.overall_status === 'failed' || r.overall_status === 'warning') {
         bypassBtn.style.display = 'block';
         bypassBtn.onclick = async () => {
@@ -723,17 +818,23 @@ port: 3000</pre>
           await bypassQA(r.id);
           if (qaDetailModal) qaDetailModal.style.display = 'none';
         };
+        resolveBtn.style.display = 'block';
+        resolveBtn.onclick = async () => {
+          await resolveQA(r.id);
+        };
+      } else if (r.overall_status === 'resolving') {
+        bypassBtn.style.display = 'none';
+        resolveBtn.style.display = 'block';
+        resolveBtn.disabled = true;
+        resolveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Resolving...';
       } else {
         bypassBtn.style.display = 'none';
+        resolveBtn.style.display = 'none';
       }
 
       const prLink = document.getElementById('qa-detail-pr-link');
-      if (r.pr_url) {
-        prLink.href = r.pr_url;
-        prLink.style.display = 'block';
-      } else {
-        prLink.style.display = 'none';
-      }
+      if (r.pr_url) { prLink.href = r.pr_url; prLink.style.display = 'block'; }
+      else { prLink.style.display = 'none'; }
     }
 
     function escapeHtml(text) {
@@ -742,6 +843,7 @@ port: 3000</pre>
       return d.innerHTML;
     }
 
+    /* ── Load QA Reports ────────────────────────────────────────────── */
     async function loadQAReports() {
       const token = localStorage.getItem('slothops_jwt');
       try {
@@ -758,7 +860,7 @@ port: 3000</pre>
               card.classList.remove('slide-in');
               qaFeed.appendChild(card);
             });
-          } else if (tabQA && tabQA.classList.contains('bg-indigo-600')) {
+          } else if (tabQA && tabQA.classList.contains('is-active')) {
             if (emptyState) {
               emptyState.style.display = 'flex';
               let p = emptyState.querySelector('p');
@@ -771,16 +873,15 @@ port: 3000</pre>
       } catch (e) { console.error(e); }
     }
 
-
+    /* ── JWT decode ─────────────────────────────────────────────────── */
     function decodeJWT(token) {
       try {
         const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
         return JSON.parse(decodeURIComponent(atob(b64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')));
-      } catch (e) {
-        return {};
-      }
+      } catch (e) { return {}; }
     }
 
+    /* ── Auth handler ───────────────────────────────────────────────── */
     async function handleAuth(url, data, errorEl) {
       try {
         let encodedData;
@@ -793,7 +894,6 @@ port: 3000</pre>
           encodedData = JSON.stringify(data);
           headers = { 'Content-Type': 'application/json' };
         }
-
         const res = await fetch(url, { method: 'POST', headers, body: encodedData });
         const json = await res.json();
         if (res.ok && json.access_token) {
@@ -824,6 +924,7 @@ port: 3000</pre>
       }, 'signup-error');
     };
 
+    /* ── Helpers ─────────────────────────────────────────────────────── */
     function formatTime(isoStr) {
       if (!isoStr) return '';
       return new Date(isoStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -863,23 +964,20 @@ port: 3000</pre>
       `;
       logFeed.prepend(row);
       flashLogsBorder();
-
       const maxRows = 250;
-      while (logFeed.children.length > maxRows) {
-        logFeed.removeChild(logFeed.lastChild);
-      }
+      while (logFeed.children.length > maxRows) logFeed.removeChild(logFeed.lastChild);
     }
 
     function recommendationHtml(issue) {
       if (!issue.recommendation) return '';
-      return `<div class="recommendation-box"><h4><i class="fa-solid fa-robot"></i> DevOps AI Hint</h4><p>${issue.recommendation}</p></div>`;
+      return `<div class="recommendation-box"><h4><i class="fa-solid fa-robot"></i> AI Recommendation</h4><p>${issue.recommendation}</p></div>`;
     }
 
+    /* ── Issue Card Creation ────────────────────────────────────────── */
     function createCard(issue) {
       const card = document.createElement('div');
       card.className = 'issue-card slide-in';
       card.id = `issue-${issue.id}`;
-
       const config = STATUS_MAP[issue.status] || { label: issue.status || 'Unknown', icon: 'fa-circle', color: 'gray' };
       const badge = issue.confidence ? `<span class="badge conf-${issue.confidence}">${issue.confidence.toUpperCase()}</span>` : '';
       const classBadge = issue.classification ? `<span class="badge class-${issue.classification}">${issue.classification}</span>` : '';
@@ -906,7 +1004,6 @@ port: 3000</pre>
           <div class="actions">${prLink}<span class="time">${formatTime(issue.created_at)}</span></div>
         </div>
       `;
-
       if (issue.status === 'fixing') card.classList.add('is-fixing');
       return card;
     }
@@ -918,9 +1015,7 @@ port: 3000</pre>
       statusContainer.innerHTML = `<i class="fa-solid ${config.icon} ${config.pulse ? 'pulse-icon' : ''}"></i> <span>${config.label}</span>`;
 
       const stepper = card.querySelector('.pipeline-stepper');
-      if (stepper) {
-        stepper.outerHTML = renderStepper(issue.status);
-      }
+      if (stepper) stepper.outerHTML = renderStepper(issue.status);
 
       if (issue.classification) {
         const oldClassBadge = card.querySelector('.badges [class*="class-"]');
@@ -955,21 +1050,134 @@ port: 3000</pre>
       card.style.animation = 'flash 0.9s';
     }
 
-    function markGithubLinked(linked) {
-      const text = linked ? 'GitHub: Linked' : 'GitHub: Pending';
-      const klass = linked ? 'success' : 'warning';
+    /* ── Integration & LLM Status (Real API) ────────────────────── */
+    const llmPill = document.getElementById('llm-pill');
+    const llmPillMobile = document.getElementById('llm-pill-mobile');
 
+    function markGithubLinked(linked, repos, targetRepo, totalRepos) {
+      const text = linked ? 'GitHub' : 'GitHub ⚠';
+      const klass = linked ? 'is-active' : 'is-warning';
       if (githubPill) {
-        githubPill.className = `pill ${klass}`;
+        githubPill.className = `status-pill ${klass}`;
         githubPill.innerHTML = '<i class="fa-brands fa-github"></i> ' + text;
       }
-
       if (githubPillMobile) {
-        githubPillMobile.className = `pill ${klass}`;
+        githubPillMobile.className = `status-pill ${klass}`;
         githubPillMobile.innerHTML = '<i class="fa-brands fa-github"></i> ' + text;
+      }
+
+      // Update integration card
+      const statusEl = document.getElementById('intg-github-status');
+      const reposEl = document.getElementById('intg-github-repos');
+      const card = document.getElementById('intg-github');
+      if (linked) {
+        statusEl.innerHTML = `<span style="color:var(--success);"><i class="fa-solid fa-check-circle"></i> Connected</span> <span style="font-size:0.7rem;color:var(--text-secondary);margin-left:0.5rem;">${totalRepos || 0} repo(s) accessible</span>`;
+        card.classList.add('intg-ok');
+        card.classList.remove('intg-warn');
+
+        let html = '';
+
+        // Show target repo prominently
+        const target = repos.find(r => r.is_target);
+        if (target) {
+          html += `<div class="intg-target-repo">
+            <span class="intg-target-badge"><i class="fa-solid fa-bullseye"></i> Active Target</span>
+            <a href="${target.url}" target="_blank" class="intg-repo-link is-target">
+              <i class="fa-solid fa-code-branch"></i> ${target.full_name}
+              <span class="intg-repo-meta">${target.language || 'N/A'} · ${target.default_branch}${target.private ? ' · 🔒' : ''}</span>
+            </a>
+          </div>`;
+        } else if (targetRepo) {
+          html += `<div class="intg-target-repo">
+            <span class="intg-target-badge is-missing"><i class="fa-solid fa-triangle-exclamation"></i> Target not found</span>
+            <p style="font-size:0.75rem;color:var(--warning);margin:0.25rem 0 0;">${targetRepo} is set in .env but not accessible by the GitHub App.</p>
+          </div>`;
+        }
+
+        // Show other accessible repos (collapsed)
+        const others = repos.filter(r => !r.is_target);
+        if (others.length > 0) {
+          html += `<details class="intg-other-repos">
+            <summary>${others.length} other accessible repo(s)</summary>
+            <div class="intg-repos-list">`;
+          others.slice(0, 15).forEach(r => {
+            html += `<a href="${r.url}" target="_blank" class="intg-repo-link">
+              <i class="fa-solid fa-code-branch"></i> ${r.full_name}
+              <span class="intg-repo-meta">${r.language || 'N/A'} · ${r.default_branch}</span>
+            </a>`;
+          });
+          if (others.length > 15) {
+            html += `<p style="font-size:0.7rem;color:var(--text-tertiary);margin:0.25rem 0 0;">+ ${others.length - 15} more…</p>`;
+          }
+          html += '</div></details>';
+        }
+
+        reposEl.innerHTML = html;
+      } else {
+        statusEl.innerHTML = '<span style="color:var(--warning);"><i class="fa-solid fa-triangle-exclamation"></i> Not connected</span>';
+        card.classList.add('intg-warn');
+        card.classList.remove('intg-ok');
+        reposEl.innerHTML = '<p style="font-size:0.75rem;color:var(--text-secondary)">Install the GitHub App from Integrations to connect repos.</p>';
       }
     }
 
+    function markLLMStatus(data) {
+      const healthy = data.status === 'healthy';
+      const klass = healthy ? 'is-active' : 'is-danger';
+      const text = healthy ? 'LLM' : 'LLM ✕';
+      if (llmPill) {
+        llmPill.className = `status-pill ${klass}`;
+        llmPill.innerHTML = '<i class="fa-solid fa-robot"></i> ' + text;
+      }
+      if (llmPillMobile) {
+        llmPillMobile.className = `status-pill ${klass}`;
+        llmPillMobile.innerHTML = '<i class="fa-solid fa-robot"></i> ' + text;
+      }
+
+      // Update integration card
+      const statusEl = document.getElementById('intg-llm-status');
+      const detailEl = document.getElementById('intg-llm-detail');
+      const card = document.getElementById('intg-llm');
+      if (healthy) {
+        statusEl.innerHTML = `<span style="color:var(--success);"><i class="fa-solid fa-check-circle"></i> Healthy</span> <span style="font-size:0.7rem;color:var(--text-secondary);margin-left:0.5rem;">${data.latency_ms}ms</span>`;
+        detailEl.innerHTML = `<span>${data.provider} · ${data.model}</span><br><span style="font-size:0.7rem;">${data.project} / ${data.location}</span>`;
+        card.classList.add('intg-ok');
+        card.classList.remove('intg-warn');
+      } else {
+        statusEl.innerHTML = '<span style="color:var(--danger);"><i class="fa-solid fa-xmark"></i> Unhealthy</span>';
+        detailEl.innerHTML = `<span style="color:var(--danger);font-size:0.75rem;">${data.error || 'Connection failed'}</span>`;
+        card.classList.add('intg-warn');
+        card.classList.remove('intg-ok');
+      }
+    }
+
+    async function fetchIntegrationStatus(token) {
+      try {
+        const res = await fetch('/api/integrations/status', { headers: { 'Authorization': `Bearer ${token}` } });
+        if (res.ok) {
+          const data = await res.json();
+          markGithubLinked(data.github.linked, data.github.repos, data.github.target_repo, data.github.total_repos);
+        }
+      } catch (e) { console.error('Integration status fetch failed', e); }
+    }
+
+    async function checkLLMHealth(token) {
+      const statusEl = document.getElementById('intg-llm-status');
+      statusEl.innerHTML = '<span style="color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Checking…</span>';
+      try {
+        const res = await fetch('/api/health/llm', { headers: { 'Authorization': `Bearer ${token}` } });
+        if (res.ok) {
+          const data = await res.json();
+          markLLMStatus(data);
+        } else {
+          markLLMStatus({ status: 'unhealthy', error: `HTTP ${res.status}` });
+        }
+      } catch (e) {
+        markLLMStatus({ status: 'unhealthy', error: e.message });
+      }
+    }
+
+    /* ── Dashboard Initialization ───────────────────────────────────── */
     async function initDashboard() {
       const token = localStorage.getItem('slothops_jwt');
       if (!token) return;
@@ -978,7 +1186,7 @@ port: 3000</pre>
       dashboardView.style.display = 'block';
       userControls.style.display = 'flex';
       connectivityPills.style.display = 'flex';
-      connectivityPillsMobile.style.display = 'block';
+      connectivityPillsMobile.style.display = 'flex';
 
       const decoded = decodeJWT(token);
       const host = window.location.origin;
@@ -987,16 +1195,14 @@ port: 3000</pre>
 
       const email = decoded.sub || 'user@example.com';
       const workspaceName = localStorage.getItem('slothops_workspace_name') || decoded.workspace_name || decoded.workspace_id || 'My Workspace';
-      profileName.innerText = `${email}`;
+      profileName.innerText = email;
       profileWorkspace.innerText = workspaceName;
 
       // Fetch Developer Config
       fetch('/api/developer-config', { headers: { 'Authorization': `Bearer ${token}` } })
         .then(res => res.json())
         .then(data => {
-          if (data.config) {
-            document.getElementById('dev-config-json').value = JSON.stringify(data.config, null, 2);
-          }
+          if (data.config) document.getElementById('dev-config-json').value = JSON.stringify(data.config, null, 2);
         }).catch(err => console.error('Failed to load dev config', err));
 
       document.getElementById('btn-save-dev-config').onclick = async () => {
@@ -1006,29 +1212,30 @@ port: 3000</pre>
           const val = document.getElementById('dev-config-json').value;
           const parsed = val ? JSON.parse(val) : null;
           if (parsed && typeof parsed !== 'object') throw new Error("Must be a JSON object");
-
           btn.innerText = "Saving...";
           const res = await fetch('/api/developer-config', {
             method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            },
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(parsed || {})
           });
           if (!res.ok) throw new Error("Save failed");
-          statusEl.innerText = "Saved successfully!";
-          statusEl.style.color = "#22c55e"; // success color
+          statusEl.innerText = "Saved!";
+          statusEl.style.color = "var(--success)";
         } catch (e) {
           statusEl.innerText = `Error: ${e.message}`;
-          statusEl.style.color = "#ef4444"; // danger color
+          statusEl.style.color = "var(--danger)";
         } finally {
           btn.innerText = "Save Config";
           setTimeout(() => { statusEl.innerText = ""; }, 3000);
         }
       };
 
-      markGithubLinked(localStorage.getItem('slothops_github_linked') === 'true');
+      // Fetch real integration status from API
+      fetchIntegrationStatus(token);
+      checkLLMHealth(token);
+
+      // LLM health re-check button
+      document.getElementById('btn-check-llm').onclick = () => checkLLMHealth(token);
 
       const urlParams = new URLSearchParams(window.location.search);
       const installationId = urlParams.get('installation_id');
@@ -1036,21 +1243,18 @@ port: 3000</pre>
         settingsModal.style.display = 'flex';
         fetch('/api/github/link', {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ installation_id: installationId })
         }).then(res => res.json()).then(data => {
           if (data.status === 'linked') {
             document.getElementById('github-success-msg').style.display = 'block';
-            localStorage.setItem('slothops_github_linked', 'true');
-            markGithubLinked(true);
+            fetchIntegrationStatus(token); // Refresh real status
             window.history.replaceState({}, document.title, window.location.pathname);
           }
         });
       }
 
+      // Load rollbacks
       try {
         const res = await fetch('/api/rollbacks', { headers: { 'Authorization': `Bearer ${token}` } });
         if (res.ok) {
@@ -1066,6 +1270,7 @@ port: 3000</pre>
         }
       } catch (e) { console.error(e); }
 
+      // Load issues
       try {
         const res = await fetch('/issues', { headers: { 'Authorization': `Bearer ${token}` } });
         if (res.status === 401) {
@@ -1073,7 +1278,6 @@ port: 3000</pre>
           window.location.reload();
           return;
         }
-
         const data = await res.json();
         if (data && data.length > 0) {
           emptyState.style.display = 'none';
@@ -1084,10 +1288,9 @@ port: 3000</pre>
             feed.appendChild(card);
           });
         }
-      } catch (e) {
-        console.error(e);
-      }
+      } catch (e) { console.error(e); }
 
+      // SSE stream
       const source = new EventSource(`/stream?token=${token}`);
 
       const handleIssueEvent = (event) => {
@@ -1098,7 +1301,6 @@ port: 3000</pre>
           if (existing) {
             updateRollbackCard(existing, payload);
             existing.style.animation = 'none';
-            // existing.offsetHeight;
             existing.style.animation = 'flash 1s';
           } else {
             if (rollbacksFeed) rollbacksFeed.prepend(createRollbackCard(payload));
@@ -1115,7 +1317,6 @@ port: 3000</pre>
               if (existing) {
                 updateRollbackCard(existing, rb);
                 existing.style.animation = 'none';
-                // existing.offsetHeight;
                 existing.style.animation = 'flash 1s';
               } else {
                 if (rollbacksFeed) rollbacksFeed.prepend(createRollbackCard(rb));
@@ -1125,7 +1326,7 @@ port: 3000</pre>
         }
 
         if (payload.event === 'qa_update' || payload.event === 'qa_report') {
-          if (tabQA && tabQA.classList.contains('bg-indigo-600')) loadQAReports();
+          if (tabQA && tabQA.classList.contains('is-active')) loadQAReports();
           return;
         }
 
@@ -1133,19 +1334,13 @@ port: 3000</pre>
 
         if (payload.id) {
           const existing = document.getElementById(`issue-${payload.id}`);
-          if (existing) {
-            updateCard(existing, payload);
-            return;
-          }
+          if (existing) { updateCard(existing, payload); return; }
         }
 
         if (payload.id && !document.getElementById(`issue-${payload.id}`)) {
           fetch(`/issues/${payload.id}`, { headers: { 'Authorization': `Bearer ${token}` } })
             .then(r => r.json())
-            .then(issue => {
-              if (issue.error) return;
-              feed.prepend(createCard(issue));
-            });
+            .then(issue => { if (issue.error) return; feed.prepend(createCard(issue)); });
         }
       };
 
@@ -1171,15 +1366,16 @@ port: 3000</pre>
           ts: new Date().toISOString(),
           level: 'WARN',
           logger: 'slothops.ui',
-          message: 'SSE disconnected. Trying to reconnect...'
+          message: 'SSE disconnected — attempting reconnection…'
         });
       };
     }
 
+    /* ── Boot ─────────────────────────────────────────────────────── */
     if (localStorage.getItem('slothops_jwt')) {
       initDashboard();
     } else {
-      authView.style.display = 'block';
+      authView.style.display = 'flex';
       dashboardView.style.display = 'none';
       userControls.style.display = 'none';
       connectivityPills.style.display = 'none';
