@@ -10,6 +10,7 @@ import { configRouter } from "./routes/config";
 import shippingRouter from "./routes/shipping";
 import marketingRouter from "./routes/marketing";
 import analyticsRouter from "./routes/analytics";
+import settingsRouter from "./routes/settings";
 import path from "path";
 
 dotenv.config();
@@ -40,9 +41,13 @@ app.use("/config", configRouter);
 app.use("/shipping", shippingRouter);
 app.use("/marketing", marketingRouter);
 app.use("/analytics", analyticsRouter);
+app.use("/settings", settingsRouter);
 
 app.get("/health", (req, res) => {
-
+  // INTENTIONAL BUILD ERROR for SlothOps rollback testing
+  const buildError: number = "This string breaks TypeScript!";
+  console.log("Health check pinged", buildError);
+  res.json({ status: "ok" });
 });
 
 app.get("/debug-sentry", function mainHandler(req, res) {
