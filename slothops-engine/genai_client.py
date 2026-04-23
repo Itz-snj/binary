@@ -1,6 +1,7 @@
 """
 SlothOps Engine — Centralized GenAI Client (Multi-Provider)
-Provides fallback support between Vertex AI, OpenRouter, and other providers.
+Provides fallback support between Vertex AI, Anthropic (Claude), OpenRouter,
+and other providers.
 """
 
 from __future__ import annotations
@@ -19,12 +20,15 @@ PROVIDER_CHAIN = [
     {"provider": "vertex", "model": "gemini-2.5-pro"},
     {"provider": "openrouter", "model": "deepseek/deepseek-v3.2"},
     {"provider": "openrouter", "model": "qwen/qwen-2.5-coder-32b"},
+    {"provider": "anthropic", "model": "claude-sonnet-4-20250514"},
     {"provider": "vertex", "model": "gemini-2.5-flash"},
+    {"provider": "anthropic", "model": "claude-haiku-4-20250514"},
 ]
 
 # Cached client instance (singleton per process)
 _client: genai.Client | None = None
 _openrouter_client: httpx.AsyncClient | None = None
+_anthropic_client = None  # anthropic.AsyncAnthropic | None
 
 
 def get_client() -> genai.Client:
@@ -120,6 +124,43 @@ async def _call_openrouter(prompt: str, model: str, system_instruction: str | No
         raise
 
 
+async def _get_anthropic_client():
+    """Return async Anthropic client (lazy-initialized singleton)."""
+    global _anthropic_client
+    if _anthropic_client is None:
+        import anthropic
+        api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY is required for Anthropic provider")
+        _anthropic_client = anthropic.AsyncAnthropic(api_key=api_key)
+    return _anthropic_client
+
+
+async def _call_anthropic(prompt: str, model: str, system_instruction: str | None = None) -> tuple[str, str]:
+    """Call Anthropic (Claude) API with specified model."""
+    client = await _get_anthropic_client()
+
+    messages = [{"role": "user", "content": prompt}]
+
+    kwargs = {
+        "model": model,
+        "max_tokens": 8192,
+        "messages": messages,
+    }
+    if system_instruction:
+        kwargs["system"] = system_instruction
+
+    try:
+        resp = await client.messages.create(**kwargs)
+        content = resp.content[0].text if resp.content else ""
+        return content, model
+    except Exception as e:
+        err_str = str(e)
+        if "429" in err_str or "rate" in err_str.lower() or "overloaded" in err_str.lower():
+            raise Exception("RateLimitError")
+        raise
+
+
 async def _call_vertex(prompt: str, model: str, system_instruction: str | None = None) -> tuple[str, str]:
     """Call Vertex AI API with specified model."""
     import asyncio
@@ -168,6 +209,8 @@ async def generate_with_fallback(
                         result, used_model = await _call_vertex(prompt, model, system_instruction)
                     elif provider == "openrouter":
                         result, used_model = await _call_openrouter(prompt, model, system_instruction)
+                    elif provider == "anthropic":
+                        result, used_model = await _call_anthropic(prompt, model, system_instruction)
                     else:
                         logger.warning("Unknown provider %s, skipping", provider)
                         continue
