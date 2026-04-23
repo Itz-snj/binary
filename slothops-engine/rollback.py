@@ -196,7 +196,6 @@ async def perform_rollback(
         failed_sha=failed_sha,
         github_app_id=github_app_id,
         github_app_private_key=github_app_private_key,
-        gemini_api_key="",
         db_path=db_path,
         smtp_config={
             "SMTP_HOST": SMTP_HOST,

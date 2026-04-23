@@ -1,6 +1,6 @@
 """
-SlothOps Engine — LLM Fixer (Vertex AI)
-Constructs prompts, calls Google Gemini 2.5 Pro via Vertex AI,
+SlothOps Engine — LLM Fixer (Multi-Provider)
+Constructs prompts, calls LLM via generate_with_fallback(),
 and parses the JSON response into a validated LLMFixResponse.
 """
 
@@ -10,9 +10,7 @@ import json
 import logging
 from typing import Optional
 
-from google.genai import types
-
-from genai_client import get_client
+from genai_client import generate_with_fallback
 from models import CallFrame, IssueRecord, LLMFixResponse
 from redactor import redact
 
@@ -151,65 +149,42 @@ def _parse_response(raw: str) -> LLMFixResponse:
 def generate_fix(
     issue: IssueRecord,
     code_context: dict[str, str],
-    gemini_api_key: Optional[str] = None,
     previous_pr_url: Optional[str] = None,
     call_chain: list[CallFrame] | None = None,
     repo=None,
 ) -> LLMFixResponse:
     """
-    Call Gemini 2.5 Pro via Vertex AI to generate a fix for the given issue.
+    Call LLM via generate_with_fallback() to generate a fix for the given issue.
 
     Raises:
         RuntimeError: If the LLM returns invalid JSON twice.
     """
-    client = get_client()
     user_prompt = _build_user_prompt(issue, code_context, previous_pr_url, call_chain)
 
-    # Convert Pydantic scheme to type for Gemini structured output
-    config_dict = {
-        "temperature": 0.2,
-        "response_mime_type": "application/json",
-        "system_instruction": SYSTEM_PROMPT,
-        # Pydantic native schema translation
-        "response_schema": LLMFixResponse.model_json_schema(),
-    }
-
-    config = types.GenerateContentConfig(**config_dict)
-
     for attempt in range(2):
-        logger.info("Calling Gemini 2.5 Pro (attempt %d)...", attempt + 1)
-        
-        # We send only the user prompt because system_instruction is in the config
-        messages = [{"role": "user", "parts": [{"text": user_prompt}]}]
-        if attempt > 0:
-            # We add a retry context if json parsing failed manually, 
-            # though structured output usually prevents this.
-            messages.append({"role": "user", "parts": [{"text": "Your previous response was not valid JSON. Please retry."}]})
-
-        response = client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=messages,
-            config=config,
-        )
-
-        raw_content = response.text or ""
+        logger.info("Calling LLM (attempt %d)...", attempt + 1)
 
         try:
+            raw_content, model_used = generate_with_fallback(
+                prompt=user_prompt,
+                system_instruction=SYSTEM_PROMPT,
+                response_mime_type="application/json",
+            )
+
             fix = _parse_response(raw_content)
-            # Second-pass: if LLM requested more files, fetch them and retry
+
             if hasattr(fix, "deep_scan_needed") and fix.deep_scan_needed and hasattr(fix, "deep_scan_files") and fix.deep_scan_files:
                 from code_fetcher import fetch_requested_files
                 additional = fetch_requested_files(fix.deep_scan_files, repo)
                 if additional:
                     code_context = {**code_context, **additional}
                     user_prompt = _build_user_prompt(issue, code_context, previous_pr_url, call_chain)
-                    messages = [{"role": "user", "parts": [{"text": user_prompt}]}]
-                    response = client.models.generate_content(
-                        model="gemini-2.5-pro",
-                        contents=messages,
-                        config=config,
+                    raw_content, model_used = generate_with_fallback(
+                        prompt=user_prompt,
+                        system_instruction=SYSTEM_PROMPT,
+                        response_mime_type="application/json",
                     )
-                    fix = _parse_response(response.text or "")
+                    fix = _parse_response(raw_content)
             return fix
         except (json.JSONDecodeError, Exception) as exc:
             logger.warning("JSON parse failed (attempt %d): %s", attempt + 1, exc)
@@ -219,7 +194,7 @@ def generate_fix(
     )
 
 def generate_infra_recommendation(issue: IssueRecord) -> str:
-    """Uses Gemini 1.5 Flash to generate a DevOps recommendation for infra errors."""
+    """Uses LLM via generate_with_fallback() to generate a DevOps recommendation for infra errors."""
     prompt = f"""
 You are SlothOps, a Senior DevOps AI. 
 A critical infrastructure error has occurred in production. 
@@ -235,14 +210,9 @@ STACK TRACE:
 Provide a concise, 1-paragraph actionable recommendation for the DevOps team.
 Do NOT output JSON. Just output plain text markdown. 
 """
-    client = get_client()
-    
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=prompt,
-        )
-        return response.text or "Check infrastructure dependencies and network connectivity."
+        response_text, _ = generate_with_fallback(prompt=prompt)
+        return response_text or "Check infrastructure dependencies and network connectivity."
     except Exception as e:
         logger.error("[%s] Infra recommendation failed: %s", issue.id[:8], e)
         return "Automatic recommendation failed due to API limits."
@@ -253,14 +223,12 @@ async def retry_fix_with_test_failure(
     code_context: dict[str, str],
     previous_fix: LLMFixResponse,
     test_output: str,
-    gemini_api_key: Optional[str] = None,
     previous_pr_url: Optional[str] = None,
     call_chain: list[CallFrame] | None = None,
 ) -> LLMFixResponse:
     """
-    Call Gemini again via Vertex AI to fix the fix based on local test failure output.
+    Call LLM via generate_with_fallback() to fix the fix based on local test failure output.
     """
-    client = get_client()
     base_prompt = _build_user_prompt(issue, code_context, previous_pr_url, call_chain)
     
     prev_files = "\n".join([f"--- {f.path} ---\n{f.fixed_content}" for f in previous_fix.files_changed])
@@ -274,25 +242,14 @@ async def retry_fix_with_test_failure(
     
     full_prompt = base_prompt + "\n\n" + retry_prompt
 
-    config_dict = {
-        "temperature": 0.2,
-        "response_mime_type": "application/json",
-        "system_instruction": SYSTEM_PROMPT,
-        "response_schema": LLMFixResponse.model_json_schema(),
-    }
-    config = types.GenerateContentConfig(**config_dict)
-
-    logger.info("Calling Gemini 2.5 Pro via Vertex AI (Refix Attempt)...")
-    messages = [{"role": "user", "parts": [{"text": full_prompt}]}]
+    logger.info("Calling LLM via generate_with_fallback() (Refix Attempt)...")
     
-    response = client.models.generate_content(
-        model="gemini-2.5-pro",
-        contents=messages,
-        config=config,
-    )
-    
-    raw_content = response.text or ""
     try:
+        raw_content, model_used = await generate_with_fallback(
+            prompt=full_prompt,
+            system_instruction=SYSTEM_PROMPT,
+            response_mime_type="application/json",
+        )
         return _parse_response(raw_content)
     except Exception as e:
         logger.warning(f"Refix JSON parse failed: {e}. Falling back to original fix.")

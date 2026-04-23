@@ -55,3 +55,9 @@ logs/
 
 # ── ngrok ───────────────────────────────────────────────────
 ngrok.yml
+
+# --- prodcut fix mds -----
+AI_CONTEXT.md
+DEV_CONTEXT.md
+SENTRY_SETUP.md
+slothops_product_roadmap.md

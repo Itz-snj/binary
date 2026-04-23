@@ -19,8 +19,12 @@ def _require(key: str) -> str:
 
 
 # ── Required keys ────────────────────────────────────────────────────────
-GOOGLE_CLOUD_PROJECT: str = _require("GOOGLE_CLOUD_PROJECT")
+GOOGLE_CLOUD_PROJECT: str | None = os.getenv("GOOGLE_CLOUD_PROJECT")
 GOOGLE_CLOUD_LOCATION: str = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+
+# --- Optional LLM Providers ---
+OPENROUTER_API_KEY: str | None = os.getenv("OPENROUTER_API_KEY")
+TOGETHER_API_KEY: str | None = os.getenv("TOGETHER_API_KEY")
 
 # --- Optional (sensible defaults) ---
 SENTRY_WEBHOOK_SECRET: str | None = os.getenv("SENTRY_WEBHOOK_SECRET")

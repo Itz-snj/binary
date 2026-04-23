@@ -250,7 +250,6 @@ async def receive_sentry_webhook(workspace_id: str, request: Request):
         run_pipeline(
             issue=issue,
             db_path=DATABASE_PATH,
-            gemini_api_key="",
             github_app_id=GITHUB_APP_ID,
             github_app_private_key=GITHUB_APP_PRIVATE_KEY,
         )
@@ -312,7 +311,6 @@ async def receive_github_webhook(request: Request):
                     asyncio.create_task(run_qa_pipeline(
                         payload=payload,
                         workspace_id=workspace_id,
-                        gemini_api_key="",
                         github_app_id=GITHUB_APP_ID,
                         github_app_private_key=GITHUB_APP_PRIVATE_KEY,
                         db_path=DATABASE_PATH
@@ -326,7 +324,6 @@ async def receive_github_webhook(request: Request):
                     await run_qa_pipeline(
                         payload=payload,
                         workspace_id=workspace_id,
-                        gemini_api_key="",
                         github_app_id=GITHUB_APP_ID,
                         github_app_private_key=GITHUB_APP_PRIVATE_KEY,
                         db_path=DATABASE_PATH
@@ -335,7 +332,6 @@ async def receive_github_webhook(request: Request):
                 asyncio.create_task(handle_human_pr_review(
                     payload=payload,
                     workspace_id=workspace_id,
-                    gemini_api_key="",
                     github_app_id=GITHUB_APP_ID,
                     github_app_private_key=GITHUB_APP_PRIVATE_KEY,
                     db_path=DATABASE_PATH
@@ -374,7 +370,6 @@ async def receive_github_webhook(request: Request):
                                 failed_sha=sha,
                                 github_app_id=GITHUB_APP_ID,
                                 github_app_private_key=GITHUB_APP_PRIVATE_KEY,
-                                gemini_api_key="",
                                 db_path=DATABASE_PATH,
                                 smtp_config={
                                     "SMTP_HOST": SMTP_HOST,

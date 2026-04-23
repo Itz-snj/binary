@@ -35,12 +35,21 @@ def _extract_frames(payload: dict) -> list[dict]:
     return frames
 
 
+DEPENDENCY_DIRS = [
+    "node_modules",
+    "site-packages",
+    "vendor",
+    ".venv",
+    "target/debug/deps",
+    ".m2/repository",
+]
+
+
 def _is_app_frame(frame: dict) -> bool:
-    """Return True if the frame is NOT from node_modules / external libs."""
+    """Return True if the frame is NOT from dependency directories."""
     filename = frame.get("filename", "") or frame.get("abs_path", "")
-    if "node_modules" in filename:
+    if any(dep_dir in filename for dep_dir in DEPENDENCY_DIRS):
         return False
-    # Sentry sometimes marks app frames explicitly
     if frame.get("in_app") is False:
         return False
     return True
@@ -108,8 +117,6 @@ def parse_sentry_webhook(payload: dict) -> tuple[IssueRecord, list[CallFrame]]:
         if file_path:
             if "/var/task/" in file_path:
                 file_path = file_path.split("/var/task/")[-1]
-            if file_path.endswith(".js"):
-                file_path = file_path[:-3] + ".ts"
 
         function_name = top_frame.get("function")
         line_number = top_frame.get("lineno")
@@ -121,8 +128,6 @@ def parse_sentry_webhook(payload: dict) -> tuple[IssueRecord, list[CallFrame]]:
         if fp:
             if "/var/task/" in fp:
                 fp = fp.split("/var/task/", 1)[-1]
-            if fp.endswith(".js"):
-                fp = fp[:-3] + ".ts"
             all_app_call_frames.append(CallFrame(
                 file_path=fp,
                 function_name=f.get("function") or "?",

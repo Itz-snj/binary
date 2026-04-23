@@ -26,6 +26,29 @@ from sse_manager import broadcast
 
 logger = logging.getLogger("slothops.pipeline")
 
+# Extension → language mapping for code_fetcher
+EXTENSION_TO_LANGUAGE = {
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".py": "python",
+    ".go": "go",
+    ".java": "java",
+    ".rs": "rust",
+    ".rb": "ruby",
+    ".php": "php",
+    ".cs": "csharp",
+}
+
+
+def _infer_language(file_path: str | None) -> str:
+    """Infer language from file extension."""
+    if not file_path:
+        return "javascript"
+    ext = os.path.splitext(file_path)[1]
+    return EXTENSION_TO_LANGUAGE.get(ext, "javascript")
+
 
 async def _update(
     issue: IssueRecord,
@@ -42,7 +65,6 @@ async def _update(
 async def run_pipeline(
     issue: IssueRecord,
     db_path: str,
-    gemini_api_key: str = "",
     github_app_id: str | None = None,
     github_app_private_key: str | None = None,
 ) -> None:
@@ -186,18 +208,21 @@ async def run_pipeline(
 
         # Check if this is a recurrence (deep scan mode)
         is_recurrence = issue.previous_fix_id is not None
+        language = _infer_language(issue.file_path)
 
         if is_recurrence:
             code_context = fetch_deep_code_context(
                 file_path=issue.file_path,
                 call_chain=call_chain,
                 repo=repo,
+                language=language,
             )
             logger.info("[%s] Deep scan: fetched %d file(s) from call chain", issue.id[:8], len(code_context))
         else:
             code_context = fetch_code_context(
                 file_path=issue.file_path,
                 repo=repo,
+                language=language,
             )
             logger.info("[%s] First pass: fetched %d file(s)", issue.id[:8], len(code_context))
 
@@ -210,14 +235,13 @@ async def run_pipeline(
         # ── 5. LLM fix generation ────────────────────────────────────
         previous_pr_url: Optional[str] = None
         if issue.previous_fix_id:
-            prev = await db.get_issue(issue.previous_fix_id, db_path)
+            prev = await db.get_issue(issue.previous_fix_id, issue.workspace_id, db_path)
             previous_pr_url = prev.fix_pr_url if prev else None
 
         try:
             fix = generate_fix(
                 issue=issue,
                 code_context=code_context,
-                gemini_api_key=gemini_api_key,
                 previous_pr_url=previous_pr_url,
                 call_chain=call_chain if is_recurrence else None,
                 repo=repo,
@@ -264,7 +288,6 @@ async def run_pipeline(
                         code_context=code_context,
                         previous_fix=fix,
                         test_output=test_output,
-                        gemini_api_key=gemini_api_key,
                         previous_pr_url=previous_pr_url,
                         call_chain=call_chain if is_recurrence else None,
                     )
@@ -335,7 +358,7 @@ async def run_pipeline(
             if dev_config:
                 logger.info("[%s] 🎨 Running style review against developer.json...", issue.id[:8])
                 changed_files_list = [{"path": fc.path, "content": fc.fixed_content} for fc in fix.files_changed]
-                style_comments = await review_against_preferences(changed_files_list, dev_config, gemini_api_key)
+                style_comments = await review_against_preferences(changed_files_list, dev_config)
                 if style_comments:
                     post_style_review_comments(pr_url, style_comments, repo)
                     logger.info("[%s] 🎨 Posted %d style suggestion(s) on PR", issue.id[:8], len(style_comments))
@@ -359,7 +382,6 @@ async def run_pipeline(
             code_review_md = await review_pr_code(
                 changed_files=[{"path": fc.path, "content": fc.fixed_content} for fc in fix.files_changed],
                 codebase_context=context_str,
-                gemini_api_key=gemini_api_key,
             )
             if code_review_md:
                 post_general_pr_comment(pr_url, code_review_md, repo)

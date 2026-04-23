@@ -10,12 +10,6 @@ import json
 import logging
 from typing import Optional
 
-from google.genai import types
-
-from genai_client import get_client
-
-
-
 logger = logging.getLogger("slothops.style_reviewer")
 
 STYLE_REVIEW_PROMPT = """You are a code style reviewer for the SlothOps automated bug remediation system.
@@ -50,10 +44,9 @@ If no style violations found, return: []
 async def review_against_preferences(
     changed_files: list[dict],
     developer_config: dict,
-    gemini_api_key: str = "",
 ) -> list[dict]:
     """
-    Send the file changes + developer preferences to Gemini and get back style comments.
+    Send the file changes + developer preferences to LLM and get back style comments.
     changed_files: [{"path": str, "content": str}]
     Returns a list of {file, line_hint, comment} dicts.
     """

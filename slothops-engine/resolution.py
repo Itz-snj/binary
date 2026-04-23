@@ -33,7 +33,6 @@ async def attempt_resolution(
     github_app_id: int,
     github_app_private_key: str,
     db_path: str,
-    gemini_api_key: str = "",
     smtp_config: dict | None = None
 ) -> None:
     """
@@ -122,7 +121,6 @@ async def attempt_resolution(
             generate_fix,
             dummy_issue,
             code_context,
-            gemini_api_key,
             repo=repo
         )
     except Exception as e:

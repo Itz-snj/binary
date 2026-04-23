@@ -10,10 +10,6 @@ import json
 import logging
 from typing import Optional
 
-from google.genai import types
-
-from genai_client import get_client
-
 logger = logging.getLogger("slothops.code_reviewer")
 
 CODE_REVIEW_PROMPT = """You are a senior software architect running an automated code review for a Pull Request.
@@ -40,10 +36,9 @@ Format your entire response as a single markdown string containing:
 async def review_pr_code(
     changed_files: list[dict],
     codebase_context: str,
-    gemini_api_key: str = "",
 ) -> str:
     """
-    Send the file changes + codebase context to Gemini and get back an architecture/logic review.
+    Send the file changes + codebase context to LLM and get back an architecture/logic review.
     changed_files: [{"path": str, "content": str}]
     Returns a markdown formatted string.
     """

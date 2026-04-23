@@ -2,9 +2,8 @@ import json
 import logging
 import os
 import subprocess
-from google.genai import types
 
-from genai_client import get_client
+from genai_client import generate_with_fallback
 
 logger = logging.getLogger("slothops.qa.functionality")
 
@@ -38,11 +37,10 @@ CHANGED FILES:
 async def run_functionality_tests(
     repo_dir: str, 
     changed_files: list[dict], 
-    gemini_api_key: str = "",
     stack_config: dict = None
 ) -> dict:
     """
-    1. Ask Gemini to generate test cases for the changed files (using detected stack)
+    1. Ask LLM to generate test cases for the changed files (using detected stack)
     2. Write them to repo_dir
     3. Run the tests
     """
@@ -57,7 +55,6 @@ async def run_functionality_tests(
     test_command = stack_config.get("test_command")
     
     logger.info("Functionality QA: Generating tests for %s/%s stack...", language, framework)
-    client = get_client()
     
     files_str = ""
     for cf in changed_files:
@@ -70,11 +67,12 @@ async def run_functionality_tests(
     )
     
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-pro",
-            contents=prompt,
+        resp_text, model_used = await generate_with_fallback(
+            prompt=prompt,
+            preferred_model="gemini-2.5-pro",
+            fallback_model="gemini-2.5-flash",
         )
-        resp_text = response.text.strip()
+        resp_text = resp_text.strip()
         if resp_text.startswith("```json"):
             resp_text = resp_text[7:-3].strip()
         elif resp_text.startswith("```"):

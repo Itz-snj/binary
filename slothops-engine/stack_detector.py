@@ -117,6 +117,61 @@ STACK_CONFIGS = {
         "install_command": "cargo build",
         "port": 8080,
     },
+    "ruby": {
+        "language": "ruby",
+        "framework": "ruby",
+        "start_command": "ruby app.rb",
+        "test_command": "bundle exec rspec",
+        "lint_commands": ["bundle exec rubocop"],
+        "type_check_command": None,
+        "audit_command": "bundle-audit check",
+        "install_command": "bundle install",
+        "port": 3000,
+    },
+    "ruby-rails": {
+        "language": "ruby",
+        "framework": "rails",
+        "start_command": "rails server -b 0.0.0.0",
+        "test_command": "rails test",
+        "lint_commands": ["bundle exec rubocop"],
+        "type_check_command": None,
+        "audit_command": "bundle-audit check",
+        "install_command": "bundle install",
+        "port": 3000,
+    },
+    "php": {
+        "language": "php",
+        "framework": "php",
+        "start_command": "php -S 0.0.0.0:8000",
+        "test_command": "vendor/bin/phpunit",
+        "lint_commands": ["vendor/bin/phpstan analyse"],
+        "type_check_command": None,
+        "audit_command": None,
+        "install_command": "composer install",
+        "port": 8000,
+    },
+    "php-laravel": {
+        "language": "php",
+        "framework": "laravel",
+        "start_command": "php artisan serve --host=0.0.0.0",
+        "test_command": "php artisan test",
+        "lint_commands": ["vendor/bin/phpstan analyse"],
+        "type_check_command": None,
+        "audit_command": None,
+        "install_command": "composer install",
+        "port": 8000,
+    },
+    "dotnet": {
+        "language": "csharp",
+        "framework": "dotnet",
+        "start_command": "dotnet run",
+        "test_command": "dotnet test",
+        "lint_commands": ["dotnet format --verify-no-changes"],
+        "type_check_command": "dotnet build --no-restore",
+        "audit_command": None,
+        "install_command": "dotnet restore",
+        "port": 5000,
+    },
     "unknown": {
         "language": "unknown",
         "framework": "unknown",
@@ -231,6 +286,71 @@ def _detect_python_variant(repo_dir: str) -> str:
     return "python"
 
 
+def _detect_ruby_variant(repo_dir: str) -> str:
+    """Determine Ruby framework (Rails or generic)."""
+    if os.path.exists(os.path.join(repo_dir, "config", "routes.rb")):
+        return "ruby-rails"
+    gemfile = os.path.join(repo_dir, "Gemfile")
+    if os.path.exists(gemfile):
+        try:
+            with open(gemfile, "r") as f:
+                content = f.read().lower()
+            if "rails" in content:
+                return "ruby-rails"
+        except Exception:
+            pass
+    return "ruby"
+
+
+def _detect_php_variant(repo_dir: str) -> str:
+    """Determine PHP framework (Laravel or generic)."""
+    if os.path.exists(os.path.join(repo_dir, "artisan")):
+        return "php-laravel"
+    composer = os.path.join(repo_dir, "composer.json")
+    if os.path.exists(composer):
+        try:
+            with open(composer, "r") as f:
+                data = json.load(f)
+            require = data.get("require", {})
+            if "laravel/framework" in require:
+                return "php-laravel"
+        except Exception:
+            pass
+    return "php"
+
+
+def _detect_monorepo(repo_dir: str) -> list[str] | None:
+    """Return list of workspace paths if monorepo detected, else None."""
+    pkg_path = os.path.join(repo_dir, "package.json")
+    if os.path.exists(pkg_path):
+        try:
+            with open(pkg_path, "r") as f:
+                pkg = json.load(f)
+            workspaces = pkg.get("workspaces", [])
+            if isinstance(workspaces, dict):
+                workspaces = workspaces.get("packages", [])
+            if workspaces:
+                return workspaces
+        except Exception:
+            pass
+
+    pnpm_path = os.path.join(repo_dir, "pnpm-workspace.yaml")
+    if os.path.exists(pnpm_path):
+        try:
+            with open(pnpm_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("#") or not line:
+                        continue
+                    if line.startswith("-"):
+                        return [line[1:].strip()]
+                    return [line]
+        except Exception:
+            pass
+
+    return None
+
+
 def _extract_start_command_from_pkg(repo_dir: str) -> str | None:
     """Try to read the 'start' script from package.json."""
     pkg_path = os.path.join(repo_dir, "package.json")
@@ -284,9 +404,20 @@ def detect_stack(repo_dir: str) -> dict:
         detected_key = "java-gradle"
     elif os.path.exists(os.path.join(repo_dir, "Cargo.toml")):
         detected_key = "rust"
-    
+    elif os.path.exists(os.path.join(repo_dir, "Gemfile")):
+        detected_key = _detect_ruby_variant(repo_dir)
+    elif os.path.exists(os.path.join(repo_dir, "composer.json")):
+        detected_key = _detect_php_variant(repo_dir)
+    elif any(f.endswith(".csproj") for f in os.listdir(repo_dir)) or \
+         any(f.endswith(".sln") for f in os.listdir(repo_dir)):
+        detected_key = "dotnet"
+
     config = dict(STACK_CONFIGS[detected_key])  # copy
-    
+
+    workspaces = _detect_monorepo(repo_dir)
+    if workspaces:
+        config["workspaces"] = workspaces
+
     # Enrich Node start command from package.json
     if detected_key.startswith("node"):
         start_cmd = _extract_start_command_from_pkg(repo_dir)

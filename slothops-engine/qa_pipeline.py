@@ -17,8 +17,6 @@ from qa_agents.regression import run_regression_tests
 from qa_agents.performance import run_performance_check
 from email_sender import send_qa_report_email
 from github_automation import post_qa_report_comment
-from genai_client import get_client
-from google.genai import types as genai_types
 import json
 
 SMTP_HOST = os.getenv("SMTP_HOST", "")
@@ -50,7 +48,6 @@ async def run_qa_pipeline(
     github_app_id: int,
     github_app_private_key: str,
     db_path: str,
-    gemini_api_key: str = "",
 ):
     """
     Main QA orchestrator. Triggers upon PR close/merge.
@@ -171,7 +168,7 @@ async def run_qa_pipeline(
         async def tool_functionality() -> dict:
             """Generate and run unit tests for changed files to verify functionality."""
             logger.info("Agent invoked FunctionalityTesting")
-            res = await run_functionality_tests(tmpdir, changed_files, gemini_api_key, stack_config)
+            res = await run_functionality_tests(tmpdir, changed_files, stack_config)
             report.functionality = res
             return res
 
@@ -205,7 +202,6 @@ async def run_qa_pipeline(
 
         logger.info("🛠️ Initializing Native GenAI Orchestrator...")
         try:
-            client = get_client()
             system_msg = (
                 "You are the QA Orchestrator for SlothOps. Decide which QA tools to run.\n"
                 "Must run: StaticAnalysis, VAPTScan.\n"
