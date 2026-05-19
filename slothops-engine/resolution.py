@@ -12,11 +12,15 @@ from datetime import datetime
 from typing import Optional
 
 import database as db
-from models import IssueRecord, ResolutionRecord, ResolutionStatus
-from github import Github, GithubIntegration, GithubException
+from build_fixer import generate_build_fix
+from deployment_logs import fetch_deployment_logs
+from github_app import get_repo_for_installation
+from models import AuditAction, AuditEvent, ResolutionRecord, ResolutionStatus
+from policy import get_effective_policy
+from github import GithubException
 from sse_manager import broadcast
-from llm_fixer import generate_fix
 from email_sender import send_resolution_notification_email
+from stack_detector import detect_stack
 
 logger = logging.getLogger("slothops.resolution")
 
@@ -41,13 +45,24 @@ async def attempt_resolution(
     """
     logger.info("Starting resolution for rollback %s on branch %s", rollback_id, backup_branch)
 
+    policy = await get_effective_policy(workspace_id, repo_name, db_path)
+    max_attempts = int(policy.get("max_resolution_attempts", MAX_RESOLUTION_ATTEMPTS))
+
     # Calculate attempt number
     existing_resolutions = await db.get_resolutions_for_rollback(rollback_id, db_path)
     attempt_number = len(existing_resolutions) + 1
 
-    if attempt_number > MAX_RESOLUTION_ATTEMPTS:
-        logger.warning("Max resolution attempts (%d) reached for rollback %s. Abandoning.", MAX_RESOLUTION_ATTEMPTS, rollback_id)
-        # TODO: Post final issue
+    if attempt_number > max_attempts:
+        logger.warning("Max resolution attempts (%d) reached for rollback %s. Abandoning.", max_attempts, rollback_id)
+        await db.create_audit_event(AuditEvent(
+            id=str(uuid.uuid4()),
+            workspace_id=workspace_id,
+            repo_name=repo_name,
+            action=AuditAction.RESOLUTION_COMPLETED.value,
+            target_type="rollback",
+            target_id=rollback_id,
+            metadata_json={"status": ResolutionStatus.ABANDONED.value},
+        ), db_path)
         return
 
     res_id = str(uuid.uuid4())
@@ -73,10 +88,7 @@ async def attempt_resolution(
 
     installation_id = int(integration_record.github_installation_id)
     try:
-        integration = GithubIntegration(github_app_id, github_app_private_key)
-        access_token = integration.get_access_token(installation_id).token
-        gh = Github(access_token)
-        repo = gh.get_repo(repo_name)
+        repo, _ = get_repo_for_installation(github_app_id, github_app_private_key, installation_id, repo_name)
     except Exception as e:
         logger.error("Failed to auth GitHub App for Resolution: %s", e)
         await db.update_resolution(res_id, db_path, status=ResolutionStatus.BUILD_FAILED.value)
@@ -103,25 +115,23 @@ async def attempt_resolution(
         await db.update_resolution(res_id, db_path, status=ResolutionStatus.BUILD_FAILED.value)
         return
 
-    # Create dummy issue for LLM
-    dummy_issue = IssueRecord(
-        id=f"res-{rollback_id[:8]}",
-        workspace_id=workspace_id,
-        error_type="Build/Deployment Failure",
-        error_message="The deployment build process failed violently.",
-        stack_trace=build_error_log,
-        file_path=list(code_context.keys())[0] if code_context else "unknown",
-        function_name="build",
-        occurrence_count=attempt_number
-    )
+    logs = fetch_deployment_logs(repo, failed_sha, fallback=build_error_log)
+    stack_config = {"language": "unknown", "framework": "unknown"}
+    try:
+        contents = repo.get_contents(".slothops.yml", ref=backup_branch)
+        if not isinstance(contents, list):
+            stack_config["slothops_config"] = contents.decoded_content.decode("utf-8", errors="replace")
+    except Exception:
+        pass
 
     # Call LLM
     try:
-        fix = await asyncio.to_thread(
-            generate_fix,
-            dummy_issue,
-            code_context,
-            repo=repo
+        fix = await generate_build_fix(
+            build_logs=logs["logs"],
+            code_context=code_context,
+            stack_config=stack_config,
+            failed_sha=failed_sha,
+            attempt_number=attempt_number,
         )
     except Exception as e:
         logger.error("LLM failed to generate resolution: %s", e)
@@ -186,10 +196,10 @@ async def attempt_resolution(
                 
             pr = repo.create_pull(
                 title=f"fix: Attempt {attempt_number} to resolve build failure from {failed_sha[:8]}",
-                body=pr_body,
+                body=fix.pr_body or pr_body,
                 head=backup_branch,
                 base="main",
-                draft=False,
+                draft=True,
             )
             pr_url = pr.html_url
             pr_number = pr.number

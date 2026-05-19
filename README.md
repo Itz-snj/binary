@@ -167,6 +167,9 @@ Auto-Fix PR ready for review
 
 ## Quick Start
 
+For the current MVP validation flow, use the full local runbook:
+[SLOTHOPS_LOCAL_TESTING.md](SLOTHOPS_LOCAL_TESTING.md).
+
 ```bash
 # 1. Clone and set up the engine
 cd slothops-engine

@@ -20,10 +20,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 import database as db
-from models import IssueRecord
+from models import AuditAction, AuditEvent, IssueRecord, RollbackStatus
 from pipeline import run_pipeline
 from sentry_parser import parse_sentry_webhook
 from sse_manager import broadcast, subscribe
+from webhook_security import extract_github_delivery_id, verify_github_signature, verify_sentry_signature
 # ── Load env early (before config.py import to avoid crash in dev) ───
 from dotenv import load_dotenv
 load_dotenv()
@@ -42,6 +43,7 @@ else:
     GITHUB_APP_PRIVATE_KEY = None
 DATABASE_PATH = os.getenv("DATABASE_PATH", "./slothops.db")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+GITHUB_WEBHOOK_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET", "")
 
 # ── Logging ──────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -220,8 +222,14 @@ async def receive_sentry_webhook(workspace_id: str, request: Request):
     Receive a Sentry webhook, parse it, bind to workspace, and kick off the pipeline async.
     Returns 200 immediately so Sentry doesn't retry.
     """
+    raw_body = await request.body()
+    integration = await db.get_integration(workspace_id, DATABASE_PATH)
+    sentry_secret = integration.sentry_webhook_secret if integration else None
+    sentry_signature = request.headers.get("x-sentry-signature") or request.headers.get("sentry-hook-signature")
+    if not verify_sentry_signature(raw_body, sentry_signature, sentry_secret):
+        return JSONResponse({"error": "Invalid signature"}, status_code=401)
     try:
-        payload: dict[str, Any] = await request.json()
+        payload: dict[str, Any] = json.loads(raw_body.decode("utf-8") or "{}")
     except Exception:
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
@@ -229,6 +237,17 @@ async def receive_sentry_webhook(workspace_id: str, request: Request):
     try:
         issue, call_frames = parse_sentry_webhook(payload)
         issue.workspace_id = workspace_id
+        project_slug = (
+            payload.get("project_slug")
+            or payload.get("data", {}).get("event", {}).get("project")
+            or payload.get("data", {}).get("event", {}).get("project_slug")
+        )
+        repo_config = await db.get_repo_config_by_sentry_project(workspace_id, str(project_slug), DATABASE_PATH) if project_slug else None
+        if not repo_config:
+            repo_config = await db.get_active_repo_config(workspace_id, DATABASE_PATH)
+        if not repo_config:
+            return JSONResponse({"error": "No repo configured for this Sentry project"}, status_code=409)
+        issue.repo_name = repo_config.repo_name
         # Store call frames in structured raw_payload for deep scan on recurrence
         issue.raw_payload = json.dumps({
             "frames": [f.model_dump() for f in call_frames],
@@ -286,8 +305,11 @@ async def receive_github_webhook(request: Request):
     On 'installation' created: store the installation_id.
     On 'installation' deleted: remove the integration record.
     """
+    raw_body = await request.body()
+    if not verify_github_signature(raw_body, request.headers.get("x-hub-signature-256"), GITHUB_WEBHOOK_SECRET):
+        return JSONResponse({"error": "Invalid signature"}, status_code=401)
     try:
-        payload = await request.json()
+        payload = json.loads(raw_body.decode("utf-8") or "{}")
     except Exception:
         return JSONResponse({"error": "Invalid JSON"}, status_code=400)
 
@@ -296,10 +318,26 @@ async def receive_github_webhook(request: Request):
     installation_id = str(installation.get("id", ""))
 
     github_event = request.headers.get("x-github-event")
+    repo_name = payload.get("repository", {}).get("full_name")
+    workspace_id = await db.get_workspace_by_installation_id(installation_id, DATABASE_PATH) if installation_id else None
+    delivery_id = extract_github_delivery_id(request.headers)
+    if delivery_id:
+        is_new = await db.record_webhook_delivery(delivery_id, github_event or "", workspace_id, repo_name, DATABASE_PATH)
+        if not is_new:
+            return {"status": "duplicate_ignored"}
+        if workspace_id:
+            await db.create_audit_event(AuditEvent(
+                id=str(uuid.uuid4()),
+                workspace_id=workspace_id,
+                repo_name=repo_name,
+                action=AuditAction.WEBHOOK_RECEIVED.value,
+                target_type="github_delivery",
+                target_id=delivery_id,
+                metadata_json={"event": github_event, "action": action},
+            ), DATABASE_PATH)
 
     if github_event == "pull_request" and action in ["opened", "synchronize"]:
         if installation_id:
-            workspace_id = await db.get_workspace_by_installation_id(installation_id, DATABASE_PATH)
             if workspace_id:
                 from github_automation import handle_human_pr_review
                 from qa_pipeline import run_qa_pipeline
@@ -313,7 +351,8 @@ async def receive_github_webhook(request: Request):
                         workspace_id=workspace_id,
                         github_app_id=GITHUB_APP_ID,
                         github_app_private_key=GITHUB_APP_PRIVATE_KEY,
-                        db_path=DATABASE_PATH
+                        db_path=DATABASE_PATH,
+                        repo_name=repo_name,
                     ))
                     return {"status": "qa_only_queued"}
                 
@@ -326,7 +365,8 @@ async def receive_github_webhook(request: Request):
                         workspace_id=workspace_id,
                         github_app_id=GITHUB_APP_ID,
                         github_app_private_key=GITHUB_APP_PRIVATE_KEY,
-                        db_path=DATABASE_PATH
+                        db_path=DATABASE_PATH,
+                        repo_name=repo_name,
                     )
                 
                 asyncio.create_task(handle_human_pr_review(
@@ -343,11 +383,9 @@ async def receive_github_webhook(request: Request):
         deployment_status = payload.get("deployment_status", {})
         state = deployment_status.get("state")
         if state in ["error", "failure"] and installation_id:
-            workspace_id = await db.get_workspace_by_installation_id(installation_id, DATABASE_PATH)
             if workspace_id:
                 sha = payload.get("deployment", {}).get("sha")
                 ref = payload.get("deployment", {}).get("ref", "")
-                repo_name = payload.get("repository", {}).get("full_name")
                 if sha and repo_name:
                     if str(ref).startswith("slothops/backup-"):
                         rollback_record = await db.get_rollback_by_backup_branch(str(ref), DATABASE_PATH)
@@ -381,18 +419,21 @@ async def receive_github_webhook(request: Request):
                             ))
                             return {"status": "resolution_queued"}
                     
-                    from rollback import perform_rollback
-                    logger.info("Received deployment failure for %s, queuing rollback...", sha[:8])
-                    asyncio.create_task(perform_rollback(
+                    from rollback import plan_rollback
+                    logger.info("Received deployment failure for %s, planning rollback...", sha[:8])
+                    asyncio.create_task(plan_rollback(
                         workspace_id=workspace_id,
                         repo_name=repo_name,
                         failed_sha=sha,
                         github_app_id=GITHUB_APP_ID,
                         github_app_private_key=GITHUB_APP_PRIVATE_KEY,
                         db_path=DATABASE_PATH,
-                        failure_reason=f"Deployment status reported {state}"
+                        failure_reason=f"Deployment status reported {state}",
+                        environment=deployment_status.get("environment"),
+                        deployment_ref=ref,
+                        deployment_url=deployment_status.get("target_url") or deployment_status.get("log_url"),
                     ))
-                    return {"status": "rollback_queued"}
+                    return {"status": "rollback_planned"}
 
     if payload.get("installation") and action == "created" and installation_id:
         # Auto-link: Find the workspace that doesn't have a GitHub integration yet
@@ -481,6 +522,37 @@ async def get_rollback_record(rollback_id: str, workspace_id: str = Depends(get_
 class QABypassRequest(BaseModel):
     reason: str
 
+class RollbackApprovalRequest(BaseModel):
+    reason: str
+
+@app.post("/api/rollbacks/{rollback_id}/approve")
+async def approve_rollback_endpoint(rollback_id: str, req: RollbackApprovalRequest, workspace_id: str = Depends(get_current_workspace)):
+    rollback = await db.get_rollback(rollback_id, DATABASE_PATH)
+    if not rollback or rollback.workspace_id != workspace_id:
+        raise HTTPException(status_code=404, detail="Not found")
+    if rollback.status not in (RollbackStatus.PENDING_APPROVAL.value, RollbackStatus.APPROVED.value):
+        raise HTTPException(status_code=400, detail=f"Rollback cannot be approved from status {rollback.status}")
+    await db.approve_rollback(rollback_id, approved_by=workspace_id, reason=req.reason, db_path=DATABASE_PATH)
+    await db.create_audit_event(AuditEvent(
+        id=str(uuid.uuid4()),
+        workspace_id=workspace_id,
+        repo_name=rollback.repo_name,
+        actor=workspace_id,
+        action=AuditAction.ROLLBACK_APPROVED.value,
+        target_type="rollback",
+        target_id=rollback_id,
+        metadata_json={"reason": req.reason},
+    ), DATABASE_PATH)
+    from rollback import execute_rollback
+    asyncio.create_task(execute_rollback(
+        rollback_id=rollback_id,
+        workspace_id=workspace_id,
+        github_app_id=GITHUB_APP_ID,
+        github_app_private_key=GITHUB_APP_PRIVATE_KEY,
+        db_path=DATABASE_PATH,
+    ))
+    return {"status": "approved", "rollback_id": rollback_id}
+
 @app.post("/api/qa-bypass/{report_id}")
 async def bypass_qa(report_id: str, req: QABypassRequest, workspace_id: str = Depends(get_current_workspace)):
     report = await db.get_qa_report(report_id, DATABASE_PATH)
@@ -496,12 +568,14 @@ async def bypass_qa(report_id: str, req: QABypassRequest, workspace_id: str = De
     try:
         integration = await db.get_integration(workspace_id, DATABASE_PATH)
         if integration and integration.github_installation_id:
-            from github import GithubIntegration, Github
+            from github_app import get_repo_for_installation
             from qa_pipeline import _set_commit_status
-            gi = GithubIntegration(GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY)
-            token = gi.get_access_token(int(integration.github_installation_id)).token
-            gh = Github(token)
-            repo = gh.get_repo(report.repo_name)
+            repo, _ = get_repo_for_installation(
+                GITHUB_APP_ID,
+                GITHUB_APP_PRIVATE_KEY,
+                integration.github_installation_id,
+                report.repo_name,
+            )
             _set_commit_status(repo, report.commit_sha, "success", f"QA bypassed: {req.reason[:100]}", report.pr_url)
             logger.info("✅ Commit status set to success after bypass for SHA %s", report.commit_sha[:8])
     except Exception as e:
@@ -524,231 +598,20 @@ async def resolve_qa(report_id: str, workspace_id: str = Depends(get_current_wor
     if report.overall_status not in ("failed", "warning"):
         raise HTTPException(status_code=400, detail="QA is not in a failed/warning state")
 
-    logger.info("🔧 QA Resolve triggered for report %s (PR #%s)", report_id, report.pr_number)
-
-    # Update status so the dashboard shows progress
     await db.update_qa_report(report_id, DATABASE_PATH, overall_status="resolving",
                               summary="SlothOps is generating fixes for the QA failures...")
     asyncio.create_task(broadcast("qa_update", {"id": report_id, "status": "resolving"}))
 
-    # Run the resolution in the background
-    asyncio.create_task(_run_qa_resolution(report, workspace_id))
+    from qa_resolution import request_qa_resolution
+    asyncio.create_task(request_qa_resolution(
+        report_id=report_id,
+        workspace_id=workspace_id,
+        db_path=DATABASE_PATH,
+        github_app_id=GITHUB_APP_ID,
+        private_key=GITHUB_APP_PRIVATE_KEY,
+    ))
 
     return {"status": "resolving", "message": "QA resolution started. Fixes will be committed to the PR branch."}
-
-
-async def _run_qa_resolution(report, workspace_id: str):
-    """Background task: generate LLM fixes for QA failures and push to PR branch."""
-    from github import GithubIntegration, Github, GithubException
-
-    try:
-        # 1. Auth GitHub
-        integration = await db.get_integration(workspace_id, DATABASE_PATH)
-        if not integration or not integration.github_installation_id:
-            logger.error("QA Resolve: No GitHub App linked")
-            await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
-                                      summary="Resolution failed: GitHub App not connected.")
-            return
-
-        private_key = GITHUB_APP_PRIVATE_KEY
-        if private_key and os.path.isfile(private_key):
-            with open(private_key, "r") as f:
-                private_key = f.read()
-
-        gi = GithubIntegration(GITHUB_APP_ID, private_key)
-        token = gi.get_access_token(int(integration.github_installation_id)).token
-        gh = Github(token)
-        repo = gh.get_repo(report.repo_name)
-        pr = repo.get_pull(report.pr_number)
-        pr_branch = pr.head.ref
-
-        logger.info("🔧 QA Resolve: Fetching files from PR #%s branch '%s'", report.pr_number, pr_branch)
-
-        # 2. Fetch changed files from the PR
-        gh_files = pr.get_files()
-        code_context = {}
-        for f in gh_files:
-            if f.status == "removed":
-                continue
-            try:
-                content_file = repo.get_contents(f.filename, ref=pr_branch)
-                if not isinstance(content_file, list):
-                    code_context[f.filename] = {
-                        "patch": getattr(f, "patch", "No diff available"),
-                        "content": content_file.decoded_content.decode("utf-8", errors="replace")
-                    }
-            except Exception:
-                pass
-
-        if not code_context:
-            logger.error("QA Resolve: No code files found in PR")
-            await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
-                                      summary="Resolution failed: no code files found in the PR.")
-            return
-
-        # 3. Build error context from all failing QA agents
-        error_context = ""
-        agents = [
-            ("Static Analysis", report.static_analysis),
-            ("Functionality Testing", report.functionality),
-            ("VAPT Scan", report.vapt),
-            ("Stress Testing", report.stress_test),
-            ("Regression Testing", report.regression),
-            ("Performance", report.performance),
-        ]
-        for name, data in agents:
-            if data and data.get("status") in ("failed", "warning"):
-                error_context += f"\n### {name}\n"
-                error_context += f"Summary: {data.get('summary', 'N/A')}\n"
-                if data.get("issues"):
-                    error_context += f"Issues: {json.dumps(data['issues'], indent=2)}\n"
-                if data.get("failures"):
-                    failures = data["failures"]
-                    if isinstance(failures, str):
-                        error_context += f"Failures:\n{failures}\n"
-                    else:
-                        error_context += f"Failures: {json.dumps(failures, indent=2)}\n"
-                if data.get("logs"):
-                    error_context += f"Logs:\n{data['logs'][:2000]}\n"
-
-        # 4. Call LLM to generate fixes
-        logger.info("🔧 QA Resolve: Calling LLM with %d files and error context...", len(code_context))
-        from genai_client import generate_with_fallback
-
-        files_section = ""
-        for path, data in code_context.items():
-            files_section += f"\n--- FILE: {path} ---\n"
-            files_section += f"DIFF:\n{data['patch']}\n"
-            files_section += f"FULL CONTENT:\n{data['content']}\n"
-
-        prompt = (
-            "You are a Senior DevOps and Software Engineer tasked with forcing a failing CI/QA pipeline to pass.\n\n"
-            "CRITICAL RULES:\n"
-            "1. You must resolve EVERY single failure reported in the QA logs so the pipeline passes green.\n"
-            "2. This includes pre-existing project debt, ESLint config issues, npm audit vulnerabilities, test failures, etc.\n"
-            "3. If fixing an issue requires updating a file that is NOT in the PR context (e.g. updating `package.json` for vulnerabilities, or creating `eslint.config.js`), you MUST include it in your output `fixes` array. The system supports creating new files and updating existing ones.\n"
-            "4. Only use `skip_reasons` if an issue is physically impossible to fix via code changes (e.g. a third-party service is down). If it can be fixed with a code/config change, FIX IT.\n\n"
-            "## QA Failure Logs\n"
-            f"{error_context}\n\n"
-            "## PR Changed Files (For Context)\n"
-            f"{files_section}\n\n"
-            "## Instructions\n"
-            "1. Analyze each QA failure.\n"
-            "2. Generate FIXED versions of ANY files needed to pass QA (including files not listed above).\n"
-            "3. Output valid JSON with this exact structure:\n"
-            "```json\n"
-            "{\n"
-            '  "fixes": [\n'
-            '    {\n'
-            '      "path": "relative/file/path.ts",\n'
-            '      "fixed_content": "...entire fixed file content...",\n'
-            '      "explanation": "Brief explanation of what was fixed and why"\n'
-            "    }\n"
-            "  ],\n"
-            '  "skip_reasons": [\n'
-            '    {\n'
-            '      "agent": "Static Analysis or VAPT etc",\n'
-            '      "reason": "Brief explanation of why this was skipped (e.g. pre-existing debt, config issue)"\n'
-            '    }\n'
-            '  ],\n'
-            '  "commit_message": "fix: brief description of all fixes"\n'
-            "}\n"
-            "```\n"
-            "Output ONLY the JSON. No markdown code blocks, no other text."
-        )
-
-        try:
-            raw, model_used = await generate_with_fallback(prompt)
-        except Exception as e:
-            await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
-                                      summary=f"Resolution failed: LLM error: {e}")
-            return
-
-        # Strip markdown code blocks if present
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-        if raw.endswith("```"):
-            raw = raw[:-3]
-        raw = raw.strip()
-
-        fix_data = json.loads(raw)
-        fixes = fix_data.get("fixes", [])
-        skip_reasons = fix_data.get("skip_reasons", [])
-        commit_msg = fix_data.get("commit_message", "fix: resolve QA failures")
-
-        if not fixes and not skip_reasons:
-            logger.warning("QA Resolve: LLM returned no fixes and no skip reasons")
-            await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
-                                      summary="Resolution failed: LLM could not determine fixes or skip reasons.")
-            return
-
-        # 5. Commit fixes to the PR branch (if any)
-        committed = 0
-        if fixes:
-            logger.info("🔧 QA Resolve: Pushing %d fixed file(s) to branch '%s'", len(fixes), pr_branch)
-            from github import InputGitTreeElement
-            
-            elements = []
-            for fix in fixes:
-                path = fix.get("path", "")
-                fixed_content = fix.get("fixed_content", "")
-                if path and fixed_content:
-                    elements.append(InputGitTreeElement(path, "100644", "blob", fixed_content))
-
-            if elements:
-                try:
-                    ref = repo.get_git_ref(f"heads/{pr_branch}")
-                    latest_commit_sha = ref.object.sha
-                    base_tree = repo.get_git_tree(latest_commit_sha)
-
-                    new_tree = repo.create_git_tree(elements, base_tree)
-                    parent_commit = repo.get_git_commit(latest_commit_sha)
-                    
-                    new_commit = repo.create_git_commit(commit_msg, new_tree, [parent_commit])
-                    ref.edit(new_commit.sha)
-
-                    committed = len(elements)
-                    logger.info("  ✅ Atomically committed %d files under SHA: %s", committed, new_commit.sha)
-                except Exception as exc:
-                    logger.error("  ❌ Failed to push atomic commit for QA Resolve: %s", exc)
-
-        # 6. Post a comment on the PR
-        comment_body = "## 🦥 SlothOps QA Auto-Resolution\n\n"
-        if committed > 0:
-            fix_summary = "\n".join([f"- `{f['path']}`: {f.get('explanation', 'Fixed')}" for f in fixes if f.get("path")])
-            comment_body += f"I analyzed the QA failures and pushed **{committed} fix(es)** to this branch.\n\n### Changes\n{fix_summary}\n\n"
-            comment_body += "The QA pipeline will re-run automatically on this push.\n\n"
-        else:
-            comment_body += "No directly fixable issues were found in the scope of this PR.\n\n"
-
-        if skip_reasons:
-            comment_body += "### Skipped (Pre-existing / Out of Scope)\n"
-            comment_body += "\n".join([f"- **{sr.get('agent', 'QA')}**: {sr.get('reason', 'Skipped')}" for sr in skip_reasons])
-            
-        pr.create_issue_comment(comment_body)
-
-        # Update the report
-        if committed > 0:
-            status_text = f"QA resolution committed {committed} fix(es). Re-running QA..."
-            overall_status = "resolved"
-        else:
-            status_text = "Analysis complete: No directly fixable PR bugs identified. See PR comment for skipped issues."
-            overall_status = "resolved"  # "resolved" because the bot completed its job successfully
-
-        await db.update_qa_report(report.id, DATABASE_PATH, overall_status=overall_status,
-                                  summary=status_text)
-        await broadcast("qa_update", {"id": report.id, "status": overall_status})
-
-        logger.info("🔧 ✅ QA Resolve complete: %d file(s) committed to %s", committed, pr_branch)
-
-    except json.JSONDecodeError as e:
-        logger.error("QA Resolve: LLM returned invalid JSON: %s", e)
-        await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
-                                  summary=f"Resolution failed: LLM returned invalid JSON.")
-    except Exception as e:
-        logger.error("QA Resolve failed: %s", e, exc_info=True)
-        await db.update_qa_report(report.id, DATABASE_PATH, overall_status="failed",
-                                  summary=f"Resolution failed: {str(e)[:200]}")
 
 
 @app.get("/api/developer-config")
@@ -797,14 +660,8 @@ async def integrations_status(workspace_id: str = Depends(get_current_workspace)
 
         # Fetch actual connected repos using the correct GitHub App API
         try:
-            from github import GithubIntegration, Auth
-            private_key = GITHUB_APP_PRIVATE_KEY
-            if private_key and os.path.isfile(private_key):
-                with open(private_key, "r") as f:
-                    private_key = f.read()
-
-            auth = Auth.AppAuth(GITHUB_APP_ID, private_key)
-            gi = GithubIntegration(auth=auth)
+            from github_app import get_integration
+            gi = get_integration(GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY)
             inst = gi.get_app_installation(int(integration.github_installation_id))
 
             for repo in inst.get_repos():

@@ -12,7 +12,7 @@ from typing import Optional
 
 import aiosqlite
 
-from models import IssueRecord
+from models import AuditEvent, IssueRecord, RepoConfig
 
 # Default path – overridden at runtime via config.DATABASE_PATH
 _DEFAULT_DB = "./slothops.db"
@@ -23,6 +23,7 @@ _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS issues (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL DEFAULT 'default_workspace',
+    repo_name TEXT,
     fingerprint TEXT NOT NULL,
     error_type TEXT,
     error_message TEXT,
@@ -101,6 +102,10 @@ CREATE TABLE IF NOT EXISTS qa_reports (
     vapt TEXT,
     regression TEXT,
     performance TEXT,
+    triage TEXT,
+    required_agents TEXT,
+    advisory_agents TEXT,
+    artifacts TEXT,
     overall_status TEXT DEFAULT 'running',
     summary TEXT,
     email_sent_to TEXT,
@@ -127,10 +132,55 @@ CREATE TABLE IF NOT EXISTS rollbacks (
     backup_branch TEXT,
     pr_number INTEGER,
     pr_url TEXT,
+    environment TEXT,
+    deployment_ref TEXT,
+    deployment_url TEXT,
+    rollback_mode TEXT,
+    rollback_strategy TEXT,
+    approved_by TEXT,
+    approved_at TIMESTAMP,
+    approval_reason TEXT,
     failure_reason TEXT,
     status TEXT DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+_CREATE_REPO_CONFIGS = """
+CREATE TABLE IF NOT EXISTS repo_configs (
+    workspace_id TEXT NOT NULL,
+    repo_name TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    sentry_project_slug TEXT,
+    active INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (workspace_id, repo_name)
+);
+"""
+
+_CREATE_WEBHOOK_DELIVERIES = """
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    delivery_id TEXT PRIMARY KEY,
+    event_type TEXT,
+    workspace_id TEXT,
+    repo_name TEXT,
+    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+_CREATE_AUDIT_EVENTS = """
+CREATE TABLE IF NOT EXISTS audit_events (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    repo_name TEXT,
+    actor TEXT,
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id TEXT,
+    metadata_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -154,6 +204,10 @@ CREATE TABLE IF NOT EXISTS resolutions (
 _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_fingerprint ON issues(fingerprint);",
     "CREATE INDEX IF NOT EXISTS idx_status ON issues(status);",
+    "CREATE INDEX IF NOT EXISTS idx_issues_workspace_repo ON issues(workspace_id, repo_name);",
+    "CREATE INDEX IF NOT EXISTS idx_repo_configs_sentry ON repo_configs(workspace_id, sentry_project_slug);",
+    "CREATE INDEX IF NOT EXISTS idx_rollbacks_failed_sha ON rollbacks(workspace_id, repo_name, failed_commit_sha);",
+    "CREATE INDEX IF NOT EXISTS idx_audit_workspace ON audit_events(workspace_id, created_at);",
 ]
 
 
@@ -173,6 +227,24 @@ def _row_to_issue(row: aiosqlite.Row) -> IssueRecord:
     return IssueRecord(**d)
 
 
+def _json_load(value, default):
+    if value is None:
+        return default
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+
+async def _ensure_column(db: aiosqlite.Connection, table: str, column: str, definition: str) -> None:
+    async with db.execute(f"PRAGMA table_info({table})") as cursor:
+        rows = await cursor.fetchall()
+    if column not in {row[1] for row in rows}:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 # ── Public API ───────────────────────────────────────────────────────────
 
 async def init_db(db_path: str = _DEFAULT_DB) -> None:
@@ -186,8 +258,27 @@ async def init_db(db_path: str = _DEFAULT_DB) -> None:
         await db.execute(_CREATE_DEVELOPER_CONFIGS)
         await db.execute(_CREATE_QA_REPORTS)
         await db.execute(_CREATE_QA_CONFIGS)
+        await db.execute(_CREATE_REPO_CONFIGS)
+        await db.execute(_CREATE_WEBHOOK_DELIVERIES)
+        await db.execute(_CREATE_AUDIT_EVENTS)
         await db.execute(_CREATE_ROLLBACKS)
         await db.execute(_CREATE_RESOLUTIONS)
+        await _ensure_column(db, "issues", "repo_name", "TEXT")
+        await _ensure_column(db, "qa_reports", "triage", "TEXT")
+        await _ensure_column(db, "qa_reports", "required_agents", "TEXT")
+        await _ensure_column(db, "qa_reports", "advisory_agents", "TEXT")
+        await _ensure_column(db, "qa_reports", "artifacts", "TEXT")
+        for column, definition in {
+            "environment": "TEXT",
+            "deployment_ref": "TEXT",
+            "deployment_url": "TEXT",
+            "rollback_mode": "TEXT",
+            "rollback_strategy": "TEXT",
+            "approved_by": "TEXT",
+            "approved_at": "TIMESTAMP",
+            "approval_reason": "TEXT",
+        }.items():
+            await _ensure_column(db, "rollbacks", column, definition)
         for idx_sql in _CREATE_INDEXES:
             await db.execute(idx_sql)
         await db.execute(
@@ -202,16 +293,17 @@ async def create_issue(issue: IssueRecord, db_path: str = _DEFAULT_DB) -> None:
         await db.execute(
             """
             INSERT INTO issues (
-                id, workspace_id, fingerprint, error_type, error_message, file_path,
+                id, workspace_id, repo_name, fingerprint, error_type, error_message, file_path,
                 function_name, line_number, stack_trace, raw_payload,
                 occurrence_count, classification, confidence, status,
                 fix_pr_url, fix_pr_branch, root_cause, recommendation,
                 previous_fix_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 issue.id,
                 issue.workspace_id,
+                issue.repo_name,
                 issue.fingerprint,
                 issue.error_type,
                 issue.error_message,
@@ -386,6 +478,123 @@ async def upsert_integration(integration, db_path: str = _DEFAULT_DB) -> None:
         await db.commit()
 
 
+async def upsert_repo_config(config: RepoConfig, db_path: str = _DEFAULT_DB) -> None:
+    now = datetime.utcnow().isoformat()
+    async with aiosqlite.connect(db_path, timeout=10.0) as db:
+        await db.execute(
+            """INSERT INTO repo_configs (
+                workspace_id, repo_name, config_json, sentry_project_slug, active, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(workspace_id, repo_name) DO UPDATE SET
+               config_json=excluded.config_json,
+               sentry_project_slug=excluded.sentry_project_slug,
+               active=excluded.active,
+               updated_at=excluded.updated_at""",
+            (
+                config.workspace_id,
+                config.repo_name,
+                json.dumps(config.config_json),
+                config.sentry_project_slug,
+                1 if config.active else 0,
+                config.created_at.isoformat(),
+                now,
+            ),
+        )
+        await db.commit()
+
+
+def _row_to_repo_config(row: aiosqlite.Row) -> RepoConfig:
+    d = dict(row)
+    d["config_json"] = _json_load(d.get("config_json"), {})
+    d["active"] = bool(d.get("active", 1))
+    for dt_field in ("created_at", "updated_at"):
+        if isinstance(d.get(dt_field), str):
+            try:
+                d[dt_field] = datetime.fromisoformat(d[dt_field])
+            except ValueError:
+                d[dt_field] = datetime.utcnow()
+    return RepoConfig(**d)
+
+
+async def get_repo_config(workspace_id: str, repo_name: str, db_path: str = _DEFAULT_DB):
+    async with aiosqlite.connect(db_path, timeout=10.0) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM repo_configs WHERE workspace_id = ? AND repo_name = ?",
+            (workspace_id, repo_name),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return _row_to_repo_config(row) if row else None
+
+
+async def get_active_repo_config(workspace_id: str, db_path: str = _DEFAULT_DB):
+    async with aiosqlite.connect(db_path, timeout=10.0) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM repo_configs WHERE workspace_id = ? AND active = 1 ORDER BY updated_at DESC LIMIT 1",
+            (workspace_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return _row_to_repo_config(row) if row else None
+
+
+async def get_repo_config_by_sentry_project(workspace_id: str, sentry_project_slug: str, db_path: str = _DEFAULT_DB):
+    async with aiosqlite.connect(db_path, timeout=10.0) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM repo_configs
+               WHERE workspace_id = ? AND sentry_project_slug = ? AND active = 1
+               ORDER BY updated_at DESC LIMIT 1""",
+            (workspace_id, sentry_project_slug),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return _row_to_repo_config(row) if row else None
+
+
+async def record_webhook_delivery(
+    delivery_id: str,
+    event_type: str,
+    workspace_id: str | None,
+    repo_name: str | None,
+    db_path: str = _DEFAULT_DB,
+) -> bool:
+    """Record a webhook delivery. Returns False if it was already seen."""
+    if not delivery_id:
+        return True
+    try:
+        async with aiosqlite.connect(db_path, timeout=10.0) as db:
+            await db.execute(
+                """INSERT INTO webhook_deliveries (delivery_id, event_type, workspace_id, repo_name, received_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (delivery_id, event_type, workspace_id, repo_name, datetime.utcnow().isoformat()),
+            )
+            await db.commit()
+            return True
+    except aiosqlite.IntegrityError:
+        return False
+
+
+async def create_audit_event(event: AuditEvent, db_path: str = _DEFAULT_DB) -> None:
+    async with aiosqlite.connect(db_path, timeout=10.0) as db:
+        await db.execute(
+            """INSERT INTO audit_events (
+                id, workspace_id, repo_name, actor, action, target_type, target_id, metadata_json, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                event.id,
+                event.workspace_id,
+                event.repo_name,
+                event.actor,
+                event.action,
+                event.target_type,
+                event.target_id,
+                json.dumps(event.metadata_json),
+                event.created_at.isoformat(),
+            ),
+        )
+        await db.commit()
+
+
 async def list_issues(workspace_id: str, db_path: str = _DEFAULT_DB) -> list[IssueRecord]:
     """Return all issues for a specific workspace ordered by most recent first."""
     async with aiosqlite.connect(db_path, timeout=10.0) as db:
@@ -428,8 +637,9 @@ async def create_qa_report(report, db_path: str = _DEFAULT_DB) -> None:
             """INSERT INTO qa_reports (
                 id, workspace_id, pr_number, pr_url, commit_sha, repo_name,
                 static_analysis, functionality, stress_test, vapt, regression,
-                performance, overall_status, summary, email_sent_to, email_sent_at, created_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                performance, triage, required_agents, advisory_agents, artifacts,
+                overall_status, summary, email_sent_to, email_sent_at, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 report.id, report.workspace_id, report.pr_number, report.pr_url,
                 report.commit_sha, report.repo_name,
@@ -439,6 +649,10 @@ async def create_qa_report(report, db_path: str = _DEFAULT_DB) -> None:
                 json.dumps(report.vapt) if report.vapt else None,
                 json.dumps(report.regression) if report.regression else None,
                 json.dumps(report.performance) if report.performance else None,
+                json.dumps(report.triage) if report.triage else None,
+                json.dumps(report.required_agents),
+                json.dumps(report.advisory_agents),
+                json.dumps(report.artifacts),
                 report.overall_status, report.summary, report.email_sent_to,
                 report.email_sent_at.isoformat() if report.email_sent_at else None,
                 report.created_at.isoformat()
@@ -453,7 +667,7 @@ async def update_qa_report(report_id: str, db_path: str = _DEFAULT_DB, **kwargs)
     values = []
     for k, v in kwargs.items():
         sets.append(f"{k} = ?")
-        if isinstance(v, dict):
+        if isinstance(v, (dict, list)):
             values.append(json.dumps(v))
         elif isinstance(v, datetime):
             values.append(v.isoformat())
@@ -475,7 +689,7 @@ async def get_qa_reports(workspace_id: str, db_path: str = _DEFAULT_DB) -> list:
             res = []
             for r in rows:
                 d = dict(r)
-                for json_col in ('static_analysis', 'functionality', 'stress_test', 'vapt', 'regression', 'performance'):
+                for json_col in ('static_analysis', 'functionality', 'stress_test', 'vapt', 'regression', 'performance', 'triage', 'required_agents', 'advisory_agents', 'artifacts'):
                     if d.get(json_col):
                         d[json_col] = json.loads(d[json_col])
                 res.append(QAReport(**d))
@@ -489,7 +703,7 @@ async def get_qa_report(report_id: str, db_path: str = _DEFAULT_DB):
             if row:
                 from models import QAReport
                 d = dict(row)
-                for json_col in ('static_analysis', 'functionality', 'stress_test', 'vapt', 'regression', 'performance'):
+                for json_col in ('static_analysis', 'functionality', 'stress_test', 'vapt', 'regression', 'performance', 'triage', 'required_agents', 'advisory_agents', 'artifacts'):
                     if d.get(json_col):
                         d[json_col] = json.loads(d[json_col])
                 return QAReport(**d)
@@ -502,12 +716,18 @@ async def create_rollback(record, db_path: str = _DEFAULT_DB) -> None:
         await db.execute(
             """INSERT INTO rollbacks (
                 id, workspace_id, repo_name, failed_commit_sha, rolled_back_to_sha,
-                backup_branch, pr_number, pr_url, failure_reason, status,
+                backup_branch, pr_number, pr_url, environment, deployment_ref,
+                deployment_url, rollback_mode, rollback_strategy, approved_by,
+                approved_at, approval_reason, failure_reason, status,
                 created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 record.id, record.workspace_id, record.repo_name, record.failed_commit_sha,
                 record.rolled_back_to_sha, record.backup_branch, record.pr_number, record.pr_url,
+                record.environment, record.deployment_ref, record.deployment_url,
+                record.rollback_mode, record.rollback_strategy, record.approved_by,
+                record.approved_at.isoformat() if record.approved_at else None,
+                record.approval_reason,
                 record.failure_reason, record.status,
                 record.created_at.isoformat(), record.updated_at.isoformat()
             )
@@ -544,6 +764,7 @@ async def get_rollbacks(workspace_id: str, db_path: str = _DEFAULT_DB) -> list:
                 d = dict(r)
                 d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
                 d["updated_at"] = datetime.fromisoformat(d["updated_at"]) if isinstance(d.get("updated_at"), str) else d.get("updated_at", datetime.utcnow())
+                d["approved_at"] = datetime.fromisoformat(d["approved_at"]) if isinstance(d.get("approved_at"), str) and d.get("approved_at") else None
                 res.append(RollbackRecord(**d))
             return res
 
@@ -557,6 +778,7 @@ async def get_rollback(rollback_id: str, db_path: str = _DEFAULT_DB):
                 d = dict(row)
                 d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
                 d["updated_at"] = datetime.fromisoformat(d["updated_at"]) if isinstance(d.get("updated_at"), str) else d.get("updated_at", datetime.utcnow())
+                d["approved_at"] = datetime.fromisoformat(d["approved_at"]) if isinstance(d.get("approved_at"), str) and d.get("approved_at") else None
                 return RollbackRecord(**d)
             return None
 
@@ -570,8 +792,47 @@ async def get_rollback_by_backup_branch(backup_branch: str, db_path: str = _DEFA
                 d = dict(row)
                 d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
                 d["updated_at"] = datetime.fromisoformat(d["updated_at"]) if isinstance(d.get("updated_at"), str) else d.get("updated_at", datetime.utcnow())
+                d["approved_at"] = datetime.fromisoformat(d["approved_at"]) if isinstance(d.get("approved_at"), str) and d.get("approved_at") else None
                 return RollbackRecord(**d)
             return None
+
+
+async def get_rollback_by_failed_sha(workspace_id: str, repo_name: str, sha: str, db_path: str = _DEFAULT_DB):
+    async with aiosqlite.connect(db_path, timeout=10.0) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM rollbacks
+               WHERE workspace_id = ? AND repo_name = ? AND failed_commit_sha = ?
+               ORDER BY created_at DESC LIMIT 1""",
+            (workspace_id, repo_name, sha),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                from models import RollbackRecord
+                d = dict(row)
+                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
+                d["updated_at"] = datetime.fromisoformat(d["updated_at"]) if isinstance(d.get("updated_at"), str) else d.get("updated_at", datetime.utcnow())
+                d["approved_at"] = datetime.fromisoformat(d["approved_at"]) if isinstance(d.get("approved_at"), str) and d.get("approved_at") else None
+                return RollbackRecord(**d)
+            return None
+
+
+async def approve_rollback(
+    rollback_id: str,
+    approved_by: str,
+    reason: str,
+    db_path: str = _DEFAULT_DB,
+) -> None:
+    from models import RollbackStatus
+
+    await update_rollback(
+        rollback_id,
+        db_path,
+        status=RollbackStatus.APPROVED.value,
+        approved_by=approved_by,
+        approved_at=datetime.utcnow(),
+        approval_reason=reason,
+    )
 
 
 # ── Resolutions CRUD ───────────────────────────────────────────────────────
@@ -637,5 +898,3 @@ async def get_resolution(resolution_id: str, db_path: str = _DEFAULT_DB):
                 d["updated_at"] = datetime.fromisoformat(d["updated_at"]) if isinstance(d.get("updated_at"), str) else d.get("updated_at", datetime.utcnow())
                 return ResolutionRecord(**d)
             return None
-
-

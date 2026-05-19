@@ -10,7 +10,7 @@ import logging
 import re
 from typing import Optional
 
-from github import Github, GithubIntegration, GithubException
+from github import GithubException
 
 from models import IssueRecord, LLMFixResponse
 
@@ -76,11 +76,11 @@ def create_fix_pr(
     issue: IssueRecord,
     fix: LLMFixResponse,
     repo,
-) -> str:
+) -> dict:
     """
     Create a branch, commit the fixed files, and open a Draft PR.
 
-    Returns the PR URL string.
+    Returns {"url", "branch", "number"}.
 
     Raises:
         RuntimeError: If GitHub operations fail.
@@ -161,7 +161,7 @@ def create_fix_pr(
         except GithubException:
             logger.warning("Could not add 'needs-careful-review' label (may not exist)")
 
-    return pr.html_url
+    return {"url": pr.html_url, "branch": branch_name, "number": pr.number}
 
 
 def post_style_review_comments(pr_url: str, comments: list[dict], repo) -> None:
@@ -217,8 +217,8 @@ async def handle_human_pr_review(
     reviews, and post the results back to the PR.
     """
     import database as db
-    from style_reviewer import review_against_preferences
-    from code_reviewer import review_pr_code
+    from github_app import get_repo_for_installation
+    from pr_insights import generate_pr_insights
     
     # 1. Setup GitHub Client
     installation_id = payload.get("installation", {}).get("id")
@@ -226,11 +226,8 @@ async def handle_human_pr_review(
         return
         
     try:
-        integration = GithubIntegration(github_app_id, github_app_private_key)
-        access_token = integration.get_access_token(installation_id).token
-        gh = Github(access_token)
         repo_name = payload["repository"]["full_name"]
-        repo = gh.get_repo(repo_name)
+        repo, _ = get_repo_for_installation(github_app_id, github_app_private_key, installation_id, repo_name)
     except Exception as e:
         logger.error("Failed to auth GitHub App for PR review: %s", e)
         return
@@ -263,32 +260,22 @@ async def handle_human_pr_review(
     if not changed_files:
         return
         
-    # 3. Style Review
     try:
+        logger.info("🧠 Running PR Insights for Human PR #%s...", pr_number)
         dev_config = await db.get_developer_config(workspace_id, db_path)
-        if dev_config:
-            logger.info("🎨 Running Style Review for Human PR #%s...", pr_number)
-            style_comments = await review_against_preferences(changed_files, dev_config)
-            post_style_review_comments(pr_url, style_comments, repo)
-    except Exception as e:
-        logger.warning("Style review failed for Human PR: %s", e)
-        
-    # 4. Architecture / Logic Review
-    try:
-        logger.info("🧠 Running Architecture Review for Human PR #%s...", pr_number)
         try:
             ai_context_file = repo.get_contents("AI_CONTEXT.md")
             context_str = ai_context_file.decoded_content.decode("utf-8")
         except Exception:
             context_str = ""
-            
-        code_review_md = await review_pr_code(
+        insight_md = await generate_pr_insights(
             changed_files=changed_files,
             codebase_context=context_str,
+            developer_config=dev_config,
         )
-        post_general_pr_comment(pr_url, code_review_md, repo)
+        post_general_pr_comment(pr_url, insight_md, repo)
     except Exception as e:
-        logger.warning("Code review failed for Human PR: %s", e)
+        logger.warning("PR insights failed for Human PR: %s", e)
 
 
 def post_qa_report_comment(pr_url: str, qa_report: dict, repo, repo_name: str) -> None:

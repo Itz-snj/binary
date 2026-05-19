@@ -35,7 +35,10 @@ async def run_performance_check(repo_dir: str, stack_config: dict = None) -> dic
     if not start_command:
         return {
             "status": "passed",
-            "summary": f"Skipping performance baseline: no start_command for {language} stack."
+            "summary": f"Skipping performance baseline: no start_command for {language} stack.",
+            "issues": [],
+            "logs": "",
+            "artifacts": [],
         }
     
     if not port:
@@ -71,7 +74,7 @@ async def run_performance_check(repo_dir: str, stack_config: dict = None) -> dic
                 
         if not found_port:
             logger.warning("Could not detect any listening port for performance check.")
-            return {"status": "warning", "summary": "App did not expose a known port for performance baseline."}
+            return {"status": "warning", "summary": "App did not expose a known port for performance baseline.", "issues": [], "logs": "", "artifacts": []}
             
         logger.info("App listening on port %d. Gathering basic performance metrics...", found_port)
         
@@ -116,5 +119,8 @@ async def run_performance_check(repo_dir: str, stack_config: dict = None) -> dic
                 
     return {
         "status": status,
-        "summary": " ".join(summary_lines)
+        "summary": " ".join(summary_lines),
+        "issues": [],
+        "logs": "",
+        "artifacts": [],
     }

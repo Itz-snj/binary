@@ -17,10 +17,12 @@ import database as db
 from classifier import classify
 from code_fetcher import fetch_code_context, fetch_deep_code_context
 import asyncio
+import uuid
 from fingerprint import check_dedup, compute_fingerprint
 from github_automation import create_fix_pr
+from github_app import get_repo_for_installation
 from llm_fixer import generate_fix, generate_infra_recommendation
-from models import CallFrame, DedupeAction, IssueRecord, IssueStatus
+from models import AuditAction, AuditEvent, CallFrame, DedupeAction, IssueRecord, IssueStatus
 from redactor import redact
 from sse_manager import broadcast
 
@@ -79,6 +81,15 @@ async def run_pipeline(
     try:
         # ── 1. Redact ────────────────────────────────────────────────
         await _update(issue, db_path, IssueStatus.TRIAGING.value)
+        await db.create_audit_event(AuditEvent(
+            id=str(uuid.uuid4()),
+            workspace_id=issue.workspace_id,
+            repo_name=issue.repo_name,
+            action=AuditAction.ISSUE_RECEIVED.value,
+            target_type="issue",
+            target_id=issue.id,
+            metadata_json={"error_type": issue.error_type},
+        ), db_path)
         issue.stack_trace = redact(issue.stack_trace or "")
         issue.error_message = redact(issue.error_message or "")
         logger.info("[%s] Redaction complete", issue.id[:8])
@@ -102,6 +113,15 @@ async def run_pipeline(
                     "message": "Duplicate — skipped",
                 })
                 logger.info("[%s] Duplicate fingerprint, skipping", issue.id[:8])
+                await db.create_audit_event(AuditEvent(
+                    id=str(uuid.uuid4()),
+                    workspace_id=issue.workspace_id,
+                    repo_name=issue.repo_name,
+                    action=AuditAction.ISSUE_DUPLICATE_SKIPPED.value,
+                    target_type="issue",
+                    target_id=existing.id,
+                    metadata_json={"fingerprint": fp},
+                ), db_path)
                 return
             elif action == DedupeAction.RETRIGGER:
                 # Mark old fix as ineffective
@@ -139,7 +159,7 @@ async def run_pipeline(
                 logger.info("[%s] Fetching Infra Recommendation from Gemini", issue.id[:8])
                 await _update(issue, db_path, IssueStatus.FIXING.value)
                 try:
-                    recommendation = await asyncio.to_thread(generate_infra_recommendation, issue)
+                    recommendation = await generate_infra_recommendation(issue)
                 except Exception as e:
                     recommendation = f"Failed to generate recommendation: {e}"
                     
@@ -159,8 +179,6 @@ async def run_pipeline(
         await _update(issue, db_path, IssueStatus.FIXING.value)
 
         try:
-            from github import Github, GithubIntegration, Auth
-            
             if not github_app_id or not github_app_private_key:
                 logger.error("[%s] GitHub App not configured (GITHUB_APP_ID or GITHUB_APP_PRIVATE_KEY missing from .env)", issue.id[:8])
                 await _update(issue, db_path, "fixing_failed", root_cause="GitHub App not configured. Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY in .env")
@@ -183,23 +201,17 @@ async def run_pipeline(
                               root_cause="GitHub App not installed. Go to Settings in your SlothOps dashboard and install the GitHub App on your repository.")
                 return
 
-            installation_id = int(integration.github_installation_id)
-            auth = Auth.AppAuth(github_app_id, private_key)
-            gi = GithubIntegration(auth=auth)
-            installation_auth = auth.get_installation_auth(installation_id)
-            g = Github(auth=installation_auth)
-            
-            # Dynamically discover which repo the user installed us on
-            installed_repos = list(gi.get_installations()[0].get_repos()) if gi.get_installations() else []
-            if not installed_repos:
-                # Fallback: try listing repos via the installation-authed client
-                installed_repos = list(g.get_user().get_repos())
-            if not installed_repos:
-                raise Exception("GitHub App has no repository access. User must install on at least one repo.")
-            
-            repo = g.get_repo(installed_repos[0].full_name)
+            if not issue.repo_name:
+                active_config = await db.get_active_repo_config(issue.workspace_id, db_path)
+                issue.repo_name = active_config.repo_name if active_config else None
+            if not issue.repo_name:
+                raise Exception("No repo configured for this issue")
+
+            repo, installation_auth = get_repo_for_installation(
+                github_app_id, private_key, integration.github_installation_id, issue.repo_name
+            )
             logger.info("[%s] ✅ Authenticated via GitHub App (Installation %s) → Repo: %s", 
-                        issue.id[:8], installation_id, repo.full_name)
+                        issue.id[:8], integration.github_installation_id, repo.full_name)
 
         except Exception as exc:
             logger.error("[%s] GitHub client init failed: %s", issue.id[:8], exc)
@@ -239,7 +251,7 @@ async def run_pipeline(
             previous_pr_url = prev.fix_pr_url if prev else None
 
         try:
-            fix = generate_fix(
+            fix = await generate_fix(
                 issue=issue,
                 code_context=code_context,
                 previous_pr_url=previous_pr_url,
@@ -253,6 +265,15 @@ async def run_pipeline(
 
         issue.confidence = fix.confidence
         issue.root_cause = fix.root_cause
+        await db.create_audit_event(AuditEvent(
+            id=str(uuid.uuid4()),
+            workspace_id=issue.workspace_id,
+            repo_name=issue.repo_name,
+            action=AuditAction.FIX_GENERATED.value,
+            target_type="issue",
+            target_id=issue.id,
+            metadata_json={"confidence": fix.confidence},
+        ), db_path)
         logger.info("[%s] Fix generated (confidence: %s)", issue.id[:8], fix.confidence)
 
         # ── 5.5. Local Test Validation (Smart Sandbox Gating) ────────
@@ -325,12 +346,21 @@ async def run_pipeline(
                 root_cause=fix.root_cause,
                 recommendation=fix.pr_body,
             )
+            await db.create_audit_event(AuditEvent(
+                id=str(uuid.uuid4()),
+                workspace_id=issue.workspace_id,
+                repo_name=issue.repo_name,
+                action=AuditAction.RECOMMENDATION_ONLY.value,
+                target_type="issue",
+                target_id=issue.id,
+                metadata_json={"confidence": fix.confidence},
+            ), db_path)
             logger.info("[%s] Low confidence — stored recommendation only", issue.id[:8])
             return
 
         # ── 7. Create GitHub PR ──────────────────────────────────────
         try:
-            pr_url = create_fix_pr(
+            pr_info = create_fix_pr(
                 issue=issue,
                 fix=fix,
                 repo=repo,
@@ -340,14 +370,24 @@ async def run_pipeline(
             await _update(issue, db_path, "pr_creation_failed", root_cause=str(exc))
             return
 
+        pr_url = pr_info["url"]
         await _update(
             issue, db_path,
             IssueStatus.PR_CREATED.value,
             confidence=fix.confidence,
             root_cause=fix.root_cause,
             fix_pr_url=pr_url,
-            fix_pr_branch=f"slothops/fix-{issue.id[:8]}",
+            fix_pr_branch=pr_info["branch"],
         )
+        await db.create_audit_event(AuditEvent(
+            id=str(uuid.uuid4()),
+            workspace_id=issue.workspace_id,
+            repo_name=issue.repo_name,
+            action=AuditAction.PR_CREATED.value,
+            target_type="issue",
+            target_id=issue.id,
+            metadata_json=pr_info,
+        ), db_path)
         logger.info("[%s] ✅ Draft PR created: %s", issue.id[:8], pr_url)
 
         # ── 8. Style & Code Review ─────────────────────────────────────────

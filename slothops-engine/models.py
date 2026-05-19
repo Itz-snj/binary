@@ -48,8 +48,47 @@ class DedupeAction(str, enum.Enum):
 
 class RollbackStatus(str, enum.Enum):
     PENDING = "pending"
+    PENDING_APPROVAL = "pending_approval"
+    APPROVED = "approved"
+    REVERTING = "reverting"
+    REVERTED = "reverted"
+    ROLLBACK_PR_OPENED = "rollback_pr_opened"
     COMPLETED = "completed"
     FAILED = "failed"
+    ABORTED = "aborted"
+
+class RollbackMode(str, enum.Enum):
+    DISABLED = "disabled"
+    SUGGEST_ONLY = "suggest_only"
+    APPROVAL_REQUIRED = "approval_required"
+    AUTO_REVERT = "auto_revert"
+
+class RollbackStrategy(str, enum.Enum):
+    ROLLBACK_PR = "rollback_pr"
+    DIRECT_REVERT = "direct_revert"
+
+class AgentImportance(str, enum.Enum):
+    REQUIRED = "required"
+    ADVISORY = "advisory"
+
+class AuditAction(str, enum.Enum):
+    WEBHOOK_RECEIVED = "webhook_received"
+    QA_STARTED = "qa_started"
+    QA_COMPLETED = "qa_completed"
+    QA_BYPASSED = "qa_bypassed"
+    QA_RESOLUTION_REQUESTED = "qa_resolution_requested"
+    ROLLBACK_PLANNED = "rollback_planned"
+    ROLLBACK_APPROVED = "rollback_approved"
+    ROLLBACK_EXECUTED = "rollback_executed"
+    ROLLBACK_FAILED = "rollback_failed"
+    ROLLBACK_ABORTED = "rollback_aborted"
+    RESOLUTION_STARTED = "resolution_started"
+    RESOLUTION_COMPLETED = "resolution_completed"
+    ISSUE_RECEIVED = "issue_received"
+    ISSUE_DUPLICATE_SKIPPED = "issue_duplicate_skipped"
+    FIX_GENERATED = "fix_generated"
+    PR_CREATED = "pr_created"
+    RECOMMENDATION_ONLY = "recommendation_only"
 
 class ResolutionStatus(str, enum.Enum):
     PENDING = "pending"
@@ -78,6 +117,7 @@ class IssueRecord(BaseModel):
 
     id: str
     workspace_id: str = "default_workspace"
+    repo_name: Optional[str] = None
     fingerprint: str = ""
     error_type: Optional[str] = None
     error_message: Optional[str] = None
@@ -109,6 +149,14 @@ class RollbackRecord(BaseModel):
     backup_branch: Optional[str] = None
     pr_number: Optional[int] = None
     pr_url: Optional[str] = None
+    environment: Optional[str] = None
+    deployment_ref: Optional[str] = None
+    deployment_url: Optional[str] = None
+    rollback_mode: str = RollbackMode.APPROVAL_REQUIRED.value
+    rollback_strategy: str = RollbackStrategy.ROLLBACK_PR.value
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    approval_reason: Optional[str] = None
     failure_reason: str = ""
     status: str = RollbackStatus.PENDING.value
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -155,6 +203,26 @@ class Integration(BaseModel):
     github_installation_id: Optional[str] = None
     sentry_webhook_secret: Optional[str] = None
 
+class RepoConfig(BaseModel):
+    workspace_id: str
+    repo_name: str
+    config_json: dict = Field(default_factory=dict)
+    sentry_project_slug: Optional[str] = None
+    active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class AuditEvent(BaseModel):
+    id: str
+    workspace_id: str
+    repo_name: Optional[str] = None
+    actor: str = "slothops"
+    action: str
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    metadata_json: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
 
 # ── LLM Response Models ─────────────────────────────────────────────────
 
@@ -165,6 +233,19 @@ class FileChange(BaseModel):
     original_content: str
     fixed_content: str
     explanation: str
+
+class BuildFileChange(BaseModel):
+    path: str
+    fixed_content: str
+    explanation: str
+
+class BuildFixResponse(BaseModel):
+    root_cause: str
+    confidence: str
+    files_changed: list[BuildFileChange] = Field(default_factory=list)
+    generated_tests: list[BuildFileChange] = Field(default_factory=list)
+    pr_title: str
+    pr_body: str
 
 
 class LLMFixResponse(BaseModel):
@@ -188,6 +269,22 @@ class QAStatus(str, enum.Enum):
     FAILED = "failed"
     RUNNING = "running"
     BYPASSED = "bypassed"
+    RESOLVING = "resolving"
+    RESOLVED = "resolved"
+
+class QATriageResult(BaseModel):
+    risk_level: str
+    categories: list[str] = Field(default_factory=list)
+    required_agents: list[str] = Field(default_factory=list)
+    advisory_agents: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+class QAAgentResult(BaseModel):
+    status: str
+    summary: str
+    issues: list[dict] = Field(default_factory=list)
+    logs: str = ""
+    artifacts: list[dict] = Field(default_factory=list)
 
 class QAReport(BaseModel):
     id: str
@@ -202,6 +299,10 @@ class QAReport(BaseModel):
     vapt: Optional[dict] = None
     regression: Optional[dict] = None
     performance: Optional[dict] = None
+    triage: Optional[dict] = None
+    required_agents: list[str] = Field(default_factory=list)
+    advisory_agents: list[str] = Field(default_factory=list)
+    artifacts: list[dict] = Field(default_factory=list)
     overall_status: str = QAStatus.RUNNING.value
     summary: str = ""
     email_sent_to: Optional[str] = None

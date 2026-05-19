@@ -1,7 +1,7 @@
-import os
 import json
 import logging
-import subprocess
+
+from command_runner import run_command
 
 logger = logging.getLogger("slothops.qa.vapt")
 
@@ -24,15 +24,13 @@ async def run_vapt_scan(repo_dir: str, stack_config: dict = None) -> dict:
     if audit_cmd:
         try:
             logger.debug("Running audit: %s", audit_cmd)
-            res = subprocess.run(
-                audit_cmd.split(),
-                cwd=repo_dir, capture_output=True, text=True, timeout=30
-            )
-            
-            # Parse JSON output for npm audit specifically
-            if "npm audit" in audit_cmd:
+            res = run_command(audit_cmd, repo_dir, timeout=30)
+            if res["timed_out"]:
+                status = "warning"
+                summary_lines.append("Audit tool timed out (>30s).")
+            elif "npm audit" in audit_cmd:
                 try:
-                    audit_data = json.loads(res.stdout)
+                    audit_data = json.loads(res["stdout"])
                     vulns = audit_data.get("metadata", {}).get("vulnerabilities", {})
                     total_vulns = sum(vulns.values())
                     
@@ -51,50 +49,50 @@ async def run_vapt_scan(repo_dir: str, stack_config: dict = None) -> dict:
                     logger.warning("Failed to parse npm audit JSON output.")
                     summary_lines.append("npm audit output was not valid JSON.")
             elif "pip-audit" in audit_cmd:
-                if res.returncode != 0:
+                if res["exit_code"] != 0:
                     status = "warning"
                     summary_lines.append("pip-audit found vulnerabilities.")
-                    issues.append({"tool": "pip-audit", "output": res.stdout[:500]})
+                    issues.append({"tool": "pip-audit", "output": res["stdout"][:500]})
                 else:
                     summary_lines.append("pip-audit passed.")
             elif "cargo audit" in audit_cmd:
-                if res.returncode != 0:
+                if res["exit_code"] != 0:
                     status = "warning"
                     summary_lines.append("cargo audit found vulnerabilities.")
-                    issues.append({"tool": "cargo audit", "output": res.stdout[:500]})
+                    issues.append({"tool": "cargo audit", "output": res["stdout"][:500]})
                 else:
                     summary_lines.append("cargo audit passed.")
             elif "govulncheck" in audit_cmd:
-                if res.returncode != 0:
+                if res["exit_code"] != 0:
                     status = "warning"
                     summary_lines.append("govulncheck found vulnerabilities.")
-                    issues.append({"tool": "govulncheck", "output": res.stdout[:500]})
+                    issues.append({"tool": "govulncheck", "output": res["stdout"][:500]})
                 else:
                     summary_lines.append("govulncheck passed.")
             else:
                 # Generic: just check exit code
-                if res.returncode != 0:
+                if res["exit_code"] != 0:
                     status = "warning"
                     summary_lines.append(f"Audit tool reported issues.")
-                    issues.append({"tool": audit_cmd.split()[0], "output": res.stdout[:500]})
+                    issues.append({"tool": audit_cmd.split()[0], "output": res["stdout"][:500]})
                 else:
                     summary_lines.append(f"Audit passed.")
                     
-        except subprocess.TimeoutExpired:
-            logger.warning("Audit tool timed out.")
-            status = "warning"
-            summary_lines.append("Audit tool timed out (>30s).")
         except Exception as e:
             logger.error("Failed to run audit: %s", e)
             summary_lines.append(f"Audit tool execution failed: {e}")
     else:
+        status = "warning"
         summary_lines.append(f"No audit tool configured for {language} stack.")
     
     if not summary_lines:
+        status = "warning"
         summary_lines.append("No supported VAPT tools ran.")
         
     return {
         "status": status,
         "summary": " ".join(summary_lines),
-        "issues": issues
+        "issues": issues,
+        "logs": "",
+        "artifacts": [],
     }

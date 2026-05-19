@@ -23,6 +23,14 @@ async def run_stress_test(repo_dir: str, stack_config: dict = None) -> dict:
     """
     if not stack_config:
         stack_config = {"start_command": None, "port": None, "language": "unknown"}
+    if not stack_config.get("stress_enabled", False):
+        return {
+            "status": "passed",
+            "summary": "Skipping stress test: not enabled by repo policy.",
+            "issues": [],
+            "logs": "",
+            "artifacts": [],
+        }
     
     logger.info("Starting Stress Testing...")
     
@@ -36,7 +44,10 @@ async def run_stress_test(repo_dir: str, stack_config: dict = None) -> dict:
     if not start_command:
         return {
             "status": "passed",
-            "summary": f"Skipping stress test: no start_command configured for {language} stack."
+            "summary": f"Skipping stress test: no start_command configured for {language} stack.",
+            "issues": [],
+            "logs": "",
+            "artifacts": [],
         }
     
     if not port:
@@ -77,7 +88,7 @@ async def run_stress_test(repo_dir: str, stack_config: dict = None) -> dict:
         if not found_port:
             logger.warning("Could not detect any listening port for stress testing.")
             summary_lines.append("Application did not expose a known port for stress testing.")
-            return {"status": "warning", "summary": summary_lines[0]}
+            return {"status": "warning", "summary": summary_lines[0], "issues": [], "logs": "", "artifacts": []}
             
         logger.info("Application detected listening on port %d. Running autocannon...", found_port)
         
@@ -134,5 +145,8 @@ async def run_stress_test(repo_dir: str, stack_config: dict = None) -> dict:
                 
     return {
         "status": status,
-        "summary": " ".join(summary_lines)
+        "summary": " ".join(summary_lines),
+        "issues": [],
+        "logs": "",
+        "artifacts": [],
     }

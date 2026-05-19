@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Optional
 
 from genai_client import generate_with_fallback
@@ -142,11 +143,25 @@ The previous fix was insufficient. Please analyze why and propose a deeper fix."
 
 def _parse_response(raw: str) -> LLMFixResponse:
     """Parse the raw JSON string from Gemini into a validated model."""
-    data = json.loads(raw)
+    data = extract_json_object(raw)
     return LLMFixResponse(**data)
 
 
-def generate_fix(
+def extract_json_object(raw: str) -> dict:
+    """Extract a JSON object from plain or markdown-wrapped LLM output."""
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?", "", text).strip()
+        text = re.sub(r"```$", "", text).strip()
+    if not text.startswith("{"):
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            text = text[start:end + 1]
+    return json.loads(text)
+
+
+async def generate_fix(
     issue: IssueRecord,
     code_context: dict[str, str],
     previous_pr_url: Optional[str] = None,
@@ -165,7 +180,7 @@ def generate_fix(
         logger.info("Calling LLM (attempt %d)...", attempt + 1)
 
         try:
-            raw_content, model_used = generate_with_fallback(
+            raw_content, model_used = await generate_with_fallback(
                 prompt=user_prompt,
                 system_instruction=SYSTEM_PROMPT,
                 response_mime_type="application/json",
@@ -175,16 +190,25 @@ def generate_fix(
 
             if hasattr(fix, "deep_scan_needed") and fix.deep_scan_needed and hasattr(fix, "deep_scan_files") and fix.deep_scan_files:
                 from code_fetcher import fetch_requested_files
+                logger.info(
+                    "[%s] LLM requested second-pass deep scan for %d file(s): %s",
+                    issue.id[:8],
+                    len(fix.deep_scan_files),
+                    ", ".join(fix.deep_scan_files[:10]),
+                )
                 additional = fetch_requested_files(fix.deep_scan_files, repo)
                 if additional:
+                    logger.info("[%s] Second-pass deep scan fetched %d file(s)", issue.id[:8], len(additional))
                     code_context = {**code_context, **additional}
                     user_prompt = _build_user_prompt(issue, code_context, previous_pr_url, call_chain)
-                    raw_content, model_used = generate_with_fallback(
+                    raw_content, model_used = await generate_with_fallback(
                         prompt=user_prompt,
                         system_instruction=SYSTEM_PROMPT,
                         response_mime_type="application/json",
                     )
                     fix = _parse_response(raw_content)
+                else:
+                    logger.warning("[%s] Second-pass deep scan returned no files", issue.id[:8])
             return fix
         except (json.JSONDecodeError, Exception) as exc:
             logger.warning("JSON parse failed (attempt %d): %s", attempt + 1, exc)
@@ -193,7 +217,7 @@ def generate_fix(
         f"LLM returned invalid JSON after 2 attempts for issue {issue.id}"
     )
 
-def generate_infra_recommendation(issue: IssueRecord) -> str:
+async def generate_infra_recommendation(issue: IssueRecord) -> str:
     """Uses LLM via generate_with_fallback() to generate a DevOps recommendation for infra errors."""
     prompt = f"""
 You are SlothOps, a Senior DevOps AI. 
@@ -211,7 +235,7 @@ Provide a concise, 1-paragraph actionable recommendation for the DevOps team.
 Do NOT output JSON. Just output plain text markdown. 
 """
     try:
-        response_text, _ = generate_with_fallback(prompt=prompt)
+        response_text, _ = await generate_with_fallback(prompt=prompt)
         return response_text or "Check infrastructure dependencies and network connectivity."
     except Exception as e:
         logger.error("[%s] Infra recommendation failed: %s", issue.id[:8], e)

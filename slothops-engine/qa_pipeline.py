@@ -7,6 +7,8 @@ from datetime import datetime
 
 import database as db
 from models import QAReport, QAStatus
+from policy import get_effective_policy
+from qa_triage import triage_pr
 from stack_detector import detect_stack
 
 from qa_agents.static_analysis import run_static_analysis
@@ -48,6 +50,7 @@ async def run_qa_pipeline(
     github_app_id: int,
     github_app_private_key: str,
     db_path: str,
+    repo_name: str | None = None,
 ):
     """
     Main QA orchestrator. Triggers upon PR close/merge.
@@ -62,17 +65,18 @@ async def run_qa_pipeline(
         
     pr_number = payload["pull_request"]["number"]
     pr_url = payload["pull_request"]["html_url"]
-    repo_name = payload["repository"]["full_name"]
+    repo_name = repo_name or payload["repository"]["full_name"]
     # Use the PR HEAD SHA (not merge_commit_sha) for pre-merge status checks
     commit_sha = payload["pull_request"]["head"]["sha"]
     
     logger.info("🚀 Starting QA Pipeline for PR #%s in %s (SHA: %s)...", pr_number, repo_name, commit_sha[:8])
     
     try:
-        integration = GithubIntegration(github_app_id, github_app_private_key)
-        access_token = integration.get_access_token(installation_id).token
-        gh = Github(access_token)
-        repo = gh.get_repo(repo_name)
+        from github_app import get_repo_for_installation
+        repo, installation_auth = get_repo_for_installation(
+            github_app_id, github_app_private_key, installation_id, repo_name
+        )
+        access_token = installation_auth.token
     except Exception as e:
         logger.error("Failed to auth GitHub App for QA: %s", e)
         return
@@ -154,8 +158,15 @@ async def run_qa_pipeline(
             except Exception:
                 pass
                 
-        # --- LANGCHAIN ORCHESTRATION ---
-        logger.info("🛠️ Initializing LangChain Orchestrator...")
+        policy = await get_effective_policy(workspace_id, repo_name, db_path)
+        stack_config["stress_enabled"] = bool(policy.get("stress_enabled", False))
+        triage = triage_pr(changed_paths, changed_files, policy)
+        required_agents = list(dict.fromkeys(triage.required_agents or policy.get("required_agents", [])))
+        advisory_agents = list(dict.fromkeys(triage.advisory_agents or policy.get("advisory_agents", [])))
+        logger.info("🧭 QA triage: risk=%s required=%s advisory=%s", triage.risk_level, required_agents, advisory_agents)
+        report.triage = triage.model_dump()
+        report.required_agents = required_agents
+        report.advisory_agents = advisory_agents
         
         # Tools definitions
         async def tool_static_analysis() -> dict:
@@ -200,45 +211,38 @@ async def run_qa_pipeline(
             report.performance = res
             return res
 
-        logger.info("🛠️ Initializing Native GenAI Orchestrator...")
-        try:
-            system_msg = (
-                "You are the QA Orchestrator for SlothOps. Decide which QA tools to run.\n"
-                "Must run: StaticAnalysis, VAPTScan.\n"
-                "If code files changed: FunctionalityTesting, RegressionTesting, PerformanceCheck.\n"
-                "If web endpoints/infra involved: StressTesting.\n"
-                "Output ONLY a raw JSON array of strings representing the exact tool names to run.\n"
-                "Valid tools: [\"StaticAnalysis\", \"FunctionalityTesting\", \"VAPTScan\", \"StressTesting\", \"RegressionTesting\", \"PerformanceCheck\"]\n"
-                "Do not output markdown blocks or any other text."
-            )
-            user_msg = f"Changed {len(changed_paths)} files:\\n{changed_paths}\\nStack: {stack_config.get('language')}/{stack_config.get('framework')}\\nHas start_command: {bool(stack_config.get('start_command'))}\\nHas test_command: {bool(stack_config.get('test_command'))}"
-            
-            from genai_client import generate_with_fallback
-            logger.info("🛠️ Asking LLM for QA Agent list...")
-            raw_text, _ = await generate_with_fallback(
-                prompt=user_msg,
-                preferred_model='gemini-2.5-flash',
-                fallback_model='gemini-2.5-flash',
-                system_instruction=system_msg
-            )
-            raw_text = raw_text.replace("```json", "").replace("```", "").strip()
-            tool_names = json.loads(raw_text)
-            logger.info(f"🧠 LLM chose tools: {tool_names}")
-            
-            langchain_summary = "QA Orchestration completed. Tools run: " + ", ".join(tool_names)
-            
-            for t in tool_names:
-                if t == "StaticAnalysis": await tool_static_analysis()
-                elif t == "FunctionalityTesting": await tool_functionality()
-                elif t == "VAPTScan": await tool_vapt()
-                elif t == "StressTesting": await tool_stress_test()
-                elif t == "RegressionTesting": await tool_regression()
-                elif t == "PerformanceCheck": await tool_performance()
-                else: logger.warning(f"Unknown tool requested by LLM: {t}")
-                
-        except Exception as e:
-            logger.error("Native Orchestrator failed: %s", e)
-            langchain_summary = f"Orchestrator encountered an error while running tools: {e}"
+        tool_map = {
+            "static_analysis": tool_static_analysis,
+            "functionality": tool_functionality,
+            "vapt": tool_vapt,
+            "stress_test": tool_stress_test,
+            "regression": tool_regression,
+            "performance": tool_performance,
+        }
+
+        executed_agents = []
+        for agent_name in required_agents:
+            tool = tool_map.get(agent_name)
+            if tool:
+                await tool()
+                executed_agents.append(agent_name)
+            else:
+                logger.warning("Unknown required QA agent: %s", agent_name)
+
+        required_failed = any(
+            getattr(report, agent, None) and getattr(report, agent).get("status") == "failed"
+            for agent in required_agents
+        )
+        if not required_failed:
+            for agent_name in advisory_agents:
+                tool = tool_map.get(agent_name)
+                if tool and agent_name not in executed_agents:
+                    await tool()
+                    executed_agents.append(agent_name)
+        else:
+            logger.info("Skipping advisory QA agents because a required agent failed.")
+
+        langchain_summary = "Deterministic QA triage completed. Agents run: " + ", ".join(executed_agents)
 
         # Aggregate status across all sub-agents (some might not have run and remain None)
         final_status = QAStatus.PASSED.value
@@ -250,9 +254,13 @@ async def run_qa_pipeline(
              final_status = QAStatus.WARNING.value
              summary_text = "No tools ran."
         else:
-            if any(r.get("status") == "failed" for r in ran_res):
+            required_res = [getattr(report, a, None) for a in required_agents]
+            advisory_res = [getattr(report, a, None) for a in advisory_agents]
+            if any(r and r.get("status") == "failed" for r in required_res):
                 final_status = QAStatus.FAILED.value
-            elif any(r.get("status") == "warning" for r in ran_res):
+            elif policy.get("warnings_block_merge") and any(r and r.get("status") == "warning" for r in required_res):
+                final_status = QAStatus.FAILED.value
+            elif any(r.get("status") in ("warning", "failed") for r in ran_res):
                 final_status = QAStatus.WARNING.value
             
             summary_parts = []
@@ -313,7 +321,11 @@ async def run_qa_pipeline(
             vapt=report.vapt,
             stress_test=report.stress_test,
             regression=report.regression,
-            performance=report.performance
+            performance=report.performance,
+            triage=report.triage,
+            required_agents=report.required_agents,
+            advisory_agents=report.advisory_agents,
+            artifacts=report.artifacts,
         )
         
         # 6. Post PR Comment
@@ -344,6 +356,6 @@ async def run_qa_pipeline(
         if final_status == QAStatus.PASSED.value:
             _set_commit_status(repo, commit_sha, "success", "All QA checks passed ✅", pr_url)
         elif final_status == QAStatus.WARNING.value:
-            _set_commit_status(repo, commit_sha, "success", "QA passed with warnings ⚠️", pr_url)
+            _set_commit_status(repo, commit_sha, "success", "QA completed with warnings", pr_url)
         else:
             _set_commit_status(repo, commit_sha, "failure", "QA checks failed ❌ — fix issues before merging", pr_url)
