@@ -57,8 +57,7 @@ async def review_pr_code(
     try:
         from genai_client import generate_with_fallback
         response_text, _ = await generate_with_fallback(
-            prompt=prompt,
-            preferred_model="gemini-2.5-pro"
+            prompt=prompt
         )
         return response_text
     except Exception as e:

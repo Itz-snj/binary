@@ -610,7 +610,6 @@ async def resolve_qa(report_id: str, workspace_id: str = Depends(get_current_wor
         github_app_id=GITHUB_APP_ID,
         private_key=GITHUB_APP_PRIVATE_KEY,
     ))
-
     return {"status": "resolving", "message": "QA resolution started. Fixes will be committed to the PR branch."}
 
 
@@ -621,6 +620,295 @@ async def get_developer_config(workspace_id: str = Depends(get_current_workspace
     if config is None:
         return {"config": None, "message": "No developer config set. Upload one to enable style reviews."}
     return {"config": config}
+
+
+# ── Repo Onboarding APIs ─────────────────────────────────────────────────
+
+# Simple in-memory cache for GitHub repos (5-minute TTL per workspace)
+_repos_cache: dict[str, tuple[list, float]] = {}
+_REPOS_CACHE_TTL = 300  # seconds
+
+
+@app.get("/api/repos")
+async def list_repos(workspace_id: str = Depends(get_current_workspace)):
+    """
+    List all repos accessible to the GitHub App installation,
+    enriched with SlothOps config state per repo.
+    Results are cached 5 minutes to avoid GitHub rate limits.
+    """
+    import time
+    cached = _repos_cache.get(workspace_id)
+    if cached and (time.time() - cached[1]) < _REPOS_CACHE_TTL:
+        return {"repos": cached[0], "cached": True}
+
+    integration = await db.get_integration(workspace_id, DATABASE_PATH)
+    if not integration or not integration.github_installation_id:
+        return {"repos": [], "github_connected": False,
+                "message": "GitHub App not linked. Use /api/github/link."}
+    try:
+        from github_app import get_integration as _get_gh_integration
+        gi = _get_gh_integration(GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY)
+        inst = gi.get_app_installation(int(integration.github_installation_id))
+        gh_repos = list(inst.get_repos())
+    except Exception as e:
+        logger.warning("Could not fetch repos for workspace %s: %s", workspace_id, e)
+        return {"repos": [], "error": str(e)}
+
+    repo_configs_list = await db.list_repo_configs(workspace_id, DATABASE_PATH)
+    config_map = {rc.repo_name: rc for rc in repo_configs_list}
+
+    result = []
+    for repo in gh_repos:
+        rc = config_map.get(repo.full_name)
+        result.append({
+            "full_name": repo.full_name,
+            "private": repo.private,
+            "default_branch": repo.default_branch,
+            "language": repo.language,
+            "url": repo.html_url,
+            "slothops": {
+                "configured": rc is not None,
+                "active": rc.active if rc else False,
+                "sentry_mapped": bool(rc.sentry_project_slug) if rc else False,
+                "policy_set": bool(rc.config_json) if rc else False,
+            },
+        })
+    result.sort(key=lambda r: (not r["slothops"]["active"], r["full_name"]))
+    _repos_cache[workspace_id] = (result, time.time())
+    return {"repos": result, "total": len(result), "github_connected": True}
+
+
+from models import RepoConfigRequest, RepoConfig
+
+
+@app.post("/api/repos/config")
+async def upsert_repo_config_endpoint(
+    req: RepoConfigRequest,
+    workspace_id: str = Depends(get_current_workspace),
+):
+    """Create or update a repo's SlothOps policy. Replaces manual DB seeding."""
+    existing = await db.get_repo_config(workspace_id, req.repo_name, DATABASE_PATH)
+    audit_action = AuditAction.REPO_CONFIG_UPDATED if existing else AuditAction.REPO_CONFIG_CREATED
+
+    config = RepoConfig(
+        workspace_id=workspace_id,
+        repo_name=req.repo_name,
+        config_json={
+            "default_branch": req.default_branch,
+            "rollback_mode": req.rollback_mode,
+            "rollback_strategy": req.rollback_strategy,
+            "required_agents": req.required_agents,
+            "advisory_agents": req.advisory_agents,
+            "warnings_block_merge": req.warnings_block_merge,
+            "allowed_environments": req.allowed_environments,
+            "max_resolution_attempts": req.max_resolution_attempts,
+            "stress_enabled": req.stress_enabled,
+        },
+        sentry_project_slug=req.sentry_project_slug,
+        active=req.active,
+    )
+    await db.upsert_repo_config(config, DATABASE_PATH)
+    _repos_cache.pop(workspace_id, None)  # invalidate cache
+    await db.create_audit_event(AuditEvent(
+        id=str(uuid.uuid4()),
+        workspace_id=workspace_id,
+        repo_name=req.repo_name,
+        action=audit_action.value,
+        target_type="repo_config",
+        target_id=req.repo_name,
+        metadata_json={
+            "sentry_project_slug": req.sentry_project_slug,
+            "active": req.active,
+            "rollback_mode": req.rollback_mode,
+        },
+    ), DATABASE_PATH)
+    return {"status": "saved", "repo_name": req.repo_name, "action": audit_action.value}
+
+
+@app.get("/api/repos/{owner}/{repo}/policy")
+async def get_repo_policy(
+    owner: str,
+    repo: str,
+    workspace_id: str = Depends(get_current_workspace),
+):
+    """Return the effective merged policy (defaults + repo overrides)."""
+    from policy import get_effective_policy
+    repo_name = f"{owner}/{repo}"
+    policy = await get_effective_policy(workspace_id, repo_name, DATABASE_PATH)
+    repo_config = await db.get_repo_config(workspace_id, repo_name, DATABASE_PATH)
+    return {
+        "repo_name": repo_name,
+        "policy": policy,
+        "has_overrides": repo_config is not None,
+        "sentry_project_slug": repo_config.sentry_project_slug if repo_config else None,
+        "active": repo_config.active if repo_config else False,
+    }
+
+
+@app.post("/api/repos/{owner}/{repo}/preflight")
+async def run_preflight(
+    owner: str,
+    repo: str,
+    workspace_id: str = Depends(get_current_workspace),
+):
+    """Non-destructive readiness check — returns structured pass/warning/fail results."""
+    from models import PreflightCheck
+    repo_name = f"{owner}/{repo}"
+    checks: list[PreflightCheck] = []
+
+    # 1. GitHub App linked
+    integration = await db.get_integration(workspace_id, DATABASE_PATH)
+    if not integration or not integration.github_installation_id:
+        checks.append(PreflightCheck(
+            check="github_app_linked", status="failed",
+            reason="GitHub App not linked.",
+            next_action="Install the SlothOps bot and call POST /api/github/link.",
+        ))
+        return {"repo_name": repo_name, "overall": "failed",
+                "checks": [c.model_dump() for c in checks]}
+    checks.append(PreflightCheck(
+        check="github_app_linked", status="passed",
+        reason=f"Installation {integration.github_installation_id} linked.",
+    ))
+
+    # 2. Repo accessible + default branch
+    repo_obj = None
+    try:
+        from github_app import get_repo_for_installation
+        repo_obj, _ = get_repo_for_installation(
+            GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY,
+            integration.github_installation_id, repo_name,
+        )
+        checks.append(PreflightCheck(
+            check="repo_accessible", status="passed",
+            reason=f"{repo_name} is accessible.",
+        ))
+        try:
+            repo_obj.get_branch(repo_obj.default_branch)
+            checks.append(PreflightCheck(
+                check="default_branch", status="passed",
+                reason=f"Default branch '{repo_obj.default_branch}' exists.",
+            ))
+        except Exception as be:
+            checks.append(PreflightCheck(
+                check="default_branch", status="failed",
+                reason=f"Branch check failed: {be}",
+                next_action="Ensure the repo has at least one commit.",
+            ))
+    except Exception as e:
+        checks.append(PreflightCheck(
+            check="repo_accessible", status="failed",
+            reason=f"Cannot access {repo_name}: {e}",
+            next_action="Ensure the GitHub App is installed on this repo.",
+        ))
+
+    # 3. GitHub App permissions
+    try:
+        from github_app import get_integration as _ghi
+        gi = _ghi(GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY)
+        inst = gi.get_app_installation(int(integration.github_installation_id))
+        perms = inst.raw_data.get("permissions", {})
+        statuses_ok = perms.get("statuses") in ("write", "admin")
+        prs_ok = perms.get("pull_requests") in ("write", "admin")
+        if statuses_ok and prs_ok:
+            checks.append(PreflightCheck(
+                check="github_permissions", status="passed",
+                reason="App has commit status and PR write permissions.",
+            ))
+        else:
+            missing = (["commit statuses"] if not statuses_ok else []) + \
+                      (["pull requests"] if not prs_ok else [])
+            checks.append(PreflightCheck(
+                check="github_permissions", status="warning",
+                reason=f"Missing permissions: {', '.join(missing)}.",
+                next_action="Re-install GitHub App with required permissions.",
+            ))
+    except Exception as e:
+        checks.append(PreflightCheck(
+            check="github_permissions", status="warning",
+            reason=f"Could not verify permissions: {e}",
+        ))
+
+    # 4. .slothops.yml detection (non-destructive: check via API)
+    if repo_obj:
+        try:
+            repo_obj.get_contents(".slothops.yml")
+            checks.append(PreflightCheck(
+                check="stack_config", status="passed",
+                reason=".slothops.yml found — custom stack config will be used.",
+            ))
+        except Exception:
+            checks.append(PreflightCheck(
+                check="stack_config", status="warning",
+                reason="No .slothops.yml — stack will be auto-detected.",
+                next_action="Optionally add .slothops.yml to specify test/lint commands.",
+            ))
+
+    # 5. Sentry mapping
+    repo_config = await db.get_repo_config(workspace_id, repo_name, DATABASE_PATH)
+    if repo_config and repo_config.sentry_project_slug:
+        checks.append(PreflightCheck(
+            check="sentry_mapping", status="passed",
+            reason=f"Sentry project '{repo_config.sentry_project_slug}' mapped.",
+        ))
+    else:
+        checks.append(PreflightCheck(
+            check="sentry_mapping", status="warning",
+            reason="No Sentry project slug configured.",
+            next_action="Set sentry_project_slug via POST /api/repos/config, or skip if not using Sentry.",
+        ))
+
+    # 6. Rollback strategy safety
+    cfg_json = repo_config.config_json if repo_config else {}
+    mode = cfg_json.get("rollback_mode", "approval_required")
+    strategy = cfg_json.get("rollback_strategy", "rollback_pr")
+    if mode == "approval_required" and strategy == "rollback_pr":
+        checks.append(PreflightCheck(
+            check="rollback_safety", status="passed",
+            reason="Safe defaults: approval_required + rollback_pr.",
+        ))
+    elif mode in ("auto_revert",) or strategy == "direct_revert":
+        checks.append(PreflightCheck(
+            check="rollback_safety", status="warning",
+            reason=f"Aggressive rollback: mode='{mode}', strategy='{strategy}'.",
+            next_action="Confirm intentional. Recommend approval_required + rollback_pr for new setups.",
+        ))
+    else:
+        checks.append(PreflightCheck(
+            check="rollback_safety", status="passed",
+            reason=f"Rollback: mode='{mode}', strategy='{strategy}'.",
+        ))
+
+    statuses = [c.status for c in checks]
+    overall = "failed" if "failed" in statuses else "warning" if "warning" in statuses else "passed"
+
+    await db.create_audit_event(AuditEvent(
+        id=str(uuid.uuid4()),
+        workspace_id=workspace_id,
+        repo_name=repo_name,
+        action=AuditAction.PREFLIGHT_RUN.value,
+        target_type="repo",
+        target_id=repo_name,
+        metadata_json={"overall": overall, "checks": len(checks)},
+    ), DATABASE_PATH)
+
+    return {"repo_name": repo_name, "overall": overall,
+            "checks": [c.model_dump() for c in checks]}
+
+
+@app.get("/api/audit-events")
+async def get_audit_events(
+    repo_name: str | None = None,
+    action: str | None = None,
+    limit: int = 50,
+    workspace_id: str = Depends(get_current_workspace),
+):
+    """Audit trail for this workspace, filtered by repo or action."""
+    events = await db.list_audit_events(
+        workspace_id, repo_name=repo_name, action=action,
+        limit=min(limit, 200), db_path=DATABASE_PATH,
+    )
+    return [e.model_dump(mode="json") for e in events]
 
 
 # ── Issue Routes ─────────────────────────────────────────────────────────
@@ -699,37 +987,16 @@ async def integrations_status(workspace_id: str = Depends(get_current_workspace)
 @app.get("/api/health/llm")
 async def health_llm(workspace_id: str = Depends(get_current_workspace)):
     """
-    Live health check: sends a tiny prompt to Vertex AI and reports latency + model availability.
+    Live health check: sends a tiny prompt through the configured LLM fallback chain.
     """
-    import time
     try:
-        from genai_client import get_client
-        client = get_client()
-        start = time.time()
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents="Reply with exactly: OK",
-        )
-        latency_ms = int((time.time() - start) * 1000)
-        reply = (response.text or "").strip()
-
-        return {
-            "status": "healthy",
-            "model": "gemini-2.5-flash",
-            "latency_ms": latency_ms,
-            "response": reply[:50],
-            "provider": "Vertex AI",
-            "project": os.getenv("GOOGLE_CLOUD_PROJECT", ""),
-            "location": os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
-        }
+        from genai_client import health_check
+        return await health_check()
     except Exception as e:
         logger.error("LLM health check failed: %s", e)
         return {
             "status": "unhealthy",
             "error": str(e),
-            "provider": "Vertex AI",
-            "project": os.getenv("GOOGLE_CLOUD_PROJECT", ""),
-            "location": os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
         }
 
 

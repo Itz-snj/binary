@@ -69,8 +69,6 @@ async def run_functionality_tests(
     try:
         resp_text, model_used = await generate_with_fallback(
             prompt=prompt,
-            preferred_model="gemini-2.5-pro",
-            fallback_model="gemini-2.5-flash",
         )
         resp_text = resp_text.strip()
         if resp_text.startswith("```json"):

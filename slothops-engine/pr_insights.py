@@ -45,7 +45,7 @@ async def generate_pr_insights(
         changed_files=files_block,
     )
     try:
-        text, _ = await generate_with_fallback(prompt=prompt, preferred_model="gemini-2.5-pro")
+        text, _ = await generate_with_fallback(prompt=prompt)
         return text
     except Exception as exc:
         logger.error("PR insights generation failed: %s", exc)

@@ -66,7 +66,6 @@ async def review_against_preferences(
         from genai_client import generate_with_fallback
         raw, _ = await generate_with_fallback(
             prompt=prompt,
-            preferred_model="gemini-2.5-pro",
             response_mime_type="application/json"
         )
         comments = json.loads(raw)

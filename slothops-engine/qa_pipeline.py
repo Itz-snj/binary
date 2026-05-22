@@ -299,8 +299,7 @@ async def run_qa_pipeline(
                     )
                     from genai_client import generate_with_fallback
                     fix_resp_text, _ = await generate_with_fallback(
-                        prompt=fix_prompt,
-                        preferred_model='gemini-2.5-pro'
+                        prompt=fix_prompt
                     )
                     summary_text += f"\n\n### 🤖 AI Auto-Fix Recommendation\n\n{fix_resp_text}\n"
                 except Exception as e:

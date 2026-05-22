@@ -89,6 +89,11 @@ class AuditAction(str, enum.Enum):
     FIX_GENERATED = "fix_generated"
     PR_CREATED = "pr_created"
     RECOMMENDATION_ONLY = "recommendation_only"
+    # Repo onboarding
+    REPO_CONFIG_CREATED = "repo_config_created"
+    REPO_CONFIG_UPDATED = "repo_config_updated"
+    PREFLIGHT_RUN = "preflight_run"
+    SENTRY_PROJECT_UNMAPPED = "sentry_project_unmapped"
 
 class ResolutionStatus(str, enum.Enum):
     PENDING = "pending"
@@ -222,6 +227,38 @@ class AuditEvent(BaseModel):
     target_id: Optional[str] = None
     metadata_json: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ── Preflight Models ────────────────────────────────────────────────────
+
+class PreflightStatus(str, enum.Enum):
+    PASSED = "passed"
+    WARNING = "warning"
+    FAILED = "failed"
+
+
+class PreflightCheck(BaseModel):
+    """One check item from a repo preflight run."""
+    check: str
+    status: str  # passed | warning | failed
+    reason: str
+    next_action: str = ""
+
+
+class RepoConfigRequest(BaseModel):
+    """Request body for POST /api/repos/config."""
+    repo_name: str
+    active: bool = True
+    sentry_project_slug: Optional[str] = None
+    default_branch: str = "main"
+    rollback_mode: str = "approval_required"
+    rollback_strategy: str = "rollback_pr"
+    required_agents: list[str] = Field(default_factory=lambda: ["static_analysis", "regression", "vapt"])
+    advisory_agents: list[str] = Field(default_factory=lambda: ["functionality"])
+    warnings_block_merge: bool = False
+    allowed_environments: list[str] = Field(default_factory=lambda: ["production"])
+    max_resolution_attempts: int = 3
+    stress_enabled: bool = False
 
 
 # ── LLM Response Models ─────────────────────────────────────────────────

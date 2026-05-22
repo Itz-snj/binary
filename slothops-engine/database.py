@@ -1,900 +1,433 @@
 """
-SlothOps Engine — Database Layer
-Async SQLite via aiosqlite.  Provides CRUD operations for the issues table.
-Call `init_db()` once at startup to create the table and indexes.
+SlothOps Engine — Database Compatibility Facade
+Maintains the original function signatures used by main.py, pipeline.py,
+qa_pipeline.py, rollback.py, resolution.py, and fingerprint.py.
+
+All functions delegate to db/crud.py via a fresh AsyncSession.
+The `db_path` parameter is accepted but ignored (legacy SQLite artifact).
+Callers do NOT need to change.
 """
 
 from __future__ import annotations
 
-import json
-from datetime import datetime
+import logging
 from typing import Optional
 
-import aiosqlite
+from db.engine import async_session_factory
+import db.crud as _crud
+from models import (
+    AuditEvent,
+    Integration,
+    IssueRecord,
+    QAReport,
+    RepoConfig,
+    ResolutionRecord,
+    RollbackRecord,
+    User,
+    Workspace,
+)
 
-from models import AuditEvent, IssueRecord, RepoConfig
+logger = logging.getLogger("slothops.database")
 
-# Default path – overridden at runtime via config.DATABASE_PATH
-_DEFAULT_DB = "./slothops.db"
-
-# ── SQL Statements ───────────────────────────────────────────────────────
-
-_CREATE_TABLE = """
-CREATE TABLE IF NOT EXISTS issues (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL DEFAULT 'default_workspace',
-    repo_name TEXT,
-    fingerprint TEXT NOT NULL,
-    error_type TEXT,
-    error_message TEXT,
-    file_path TEXT,
-    function_name TEXT,
-    line_number INTEGER,
-    stack_trace TEXT,
-    raw_payload TEXT,
-    occurrence_count INTEGER DEFAULT 1,
-    classification TEXT DEFAULT 'unknown',
-    confidence TEXT,
-    status TEXT DEFAULT 'received',
-    fix_pr_url TEXT,
-    fix_pr_branch TEXT,
-    root_cause TEXT,
-    recommendation TEXT,
-    previous_fix_id TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-_CREATE_WORKSPACES = """
-CREATE TABLE IF NOT EXISTS workspaces (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-_CREATE_USERS = """
-CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    email TEXT UNIQUE NOT NULL,
-    hashed_password TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-_CREATE_WORKSPACE_USERS = """
-CREATE TABLE IF NOT EXISTS workspace_users (
-    workspace_id TEXT,
-    user_id TEXT,
-    role TEXT DEFAULT 'admin',
-    PRIMARY KEY (workspace_id, user_id)
-);
-"""
-
-_CREATE_INTEGRATIONS = """
-CREATE TABLE IF NOT EXISTS integrations (
-    workspace_id TEXT PRIMARY KEY,
-    github_installation_id TEXT,
-    sentry_webhook_secret TEXT
-);
-"""
-
-_CREATE_DEVELOPER_CONFIGS = """
-CREATE TABLE IF NOT EXISTS developer_configs (
-    workspace_id TEXT PRIMARY KEY,
-    config_json TEXT NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-_CREATE_QA_REPORTS = """
-CREATE TABLE IF NOT EXISTS qa_reports (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    pr_number INTEGER NOT NULL,
-    pr_url TEXT,
-    commit_sha TEXT,
-    repo_name TEXT,
-    static_analysis TEXT,
-    functionality TEXT,
-    stress_test TEXT,
-    vapt TEXT,
-    regression TEXT,
-    performance TEXT,
-    triage TEXT,
-    required_agents TEXT,
-    advisory_agents TEXT,
-    artifacts TEXT,
-    overall_status TEXT DEFAULT 'running',
-    summary TEXT,
-    email_sent_to TEXT,
-    email_sent_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-_CREATE_QA_CONFIGS = """
-CREATE TABLE IF NOT EXISTS qa_configs (
-    workspace_id TEXT PRIMARY KEY,
-    config_json TEXT NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-_CREATE_ROLLBACKS = """
-CREATE TABLE IF NOT EXISTS rollbacks (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    repo_name TEXT NOT NULL,
-    failed_commit_sha TEXT NOT NULL,
-    rolled_back_to_sha TEXT,
-    backup_branch TEXT,
-    pr_number INTEGER,
-    pr_url TEXT,
-    environment TEXT,
-    deployment_ref TEXT,
-    deployment_url TEXT,
-    rollback_mode TEXT,
-    rollback_strategy TEXT,
-    approved_by TEXT,
-    approved_at TIMESTAMP,
-    approval_reason TEXT,
-    failure_reason TEXT,
-    status TEXT DEFAULT 'pending',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-_CREATE_REPO_CONFIGS = """
-CREATE TABLE IF NOT EXISTS repo_configs (
-    workspace_id TEXT NOT NULL,
-    repo_name TEXT NOT NULL,
-    config_json TEXT NOT NULL,
-    sentry_project_slug TEXT,
-    active INTEGER DEFAULT 1,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (workspace_id, repo_name)
-);
-"""
-
-_CREATE_WEBHOOK_DELIVERIES = """
-CREATE TABLE IF NOT EXISTS webhook_deliveries (
-    delivery_id TEXT PRIMARY KEY,
-    event_type TEXT,
-    workspace_id TEXT,
-    repo_name TEXT,
-    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-_CREATE_AUDIT_EVENTS = """
-CREATE TABLE IF NOT EXISTS audit_events (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    repo_name TEXT,
-    actor TEXT,
-    action TEXT NOT NULL,
-    target_type TEXT,
-    target_id TEXT,
-    metadata_json TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-_CREATE_RESOLUTIONS = """
-CREATE TABLE IF NOT EXISTS resolutions (
-    id TEXT PRIMARY KEY,
-    rollback_id TEXT NOT NULL,
-    workspace_id TEXT NOT NULL,
-    repo_name TEXT NOT NULL,
-    backup_branch TEXT NOT NULL,
-    resolution_pr_url TEXT,
-    resolution_pr_number INTEGER,
-    attempt_number INTEGER DEFAULT 1,
-    build_error_log TEXT,
-    status TEXT DEFAULT 'pending',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-_CREATE_INDEXES = [
-    "CREATE INDEX IF NOT EXISTS idx_fingerprint ON issues(fingerprint);",
-    "CREATE INDEX IF NOT EXISTS idx_status ON issues(status);",
-    "CREATE INDEX IF NOT EXISTS idx_issues_workspace_repo ON issues(workspace_id, repo_name);",
-    "CREATE INDEX IF NOT EXISTS idx_repo_configs_sentry ON repo_configs(workspace_id, sentry_project_slug);",
-    "CREATE INDEX IF NOT EXISTS idx_rollbacks_failed_sha ON rollbacks(workspace_id, repo_name, failed_commit_sha);",
-    "CREATE INDEX IF NOT EXISTS idx_audit_workspace ON audit_events(workspace_id, created_at);",
-]
+_LEGACY_WARNING_SHOWN = False
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────
-
-def _row_to_issue(row: aiosqlite.Row) -> IssueRecord:
-    """Convert a sqlite3.Row to an IssueRecord."""
-    d = dict(row)
-    # Parse datetime strings back
-    for dt_field in ("created_at", "updated_at"):
-        val = d.get(dt_field)
-        if isinstance(val, str):
-            try:
-                d[dt_field] = datetime.fromisoformat(val)
-            except (ValueError, TypeError):
-                d[dt_field] = datetime.utcnow()
-    return IssueRecord(**d)
-
-
-def _json_load(value, default):
-    if value is None:
-        return default
-    if isinstance(value, (dict, list)):
-        return value
-    try:
-        return json.loads(value)
-    except (TypeError, json.JSONDecodeError):
-        return default
-
-
-async def _ensure_column(db: aiosqlite.Connection, table: str, column: str, definition: str) -> None:
-    async with db.execute(f"PRAGMA table_info({table})") as cursor:
-        rows = await cursor.fetchall()
-    if column not in {row[1] for row in rows}:
-        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-
-
-# ── Public API ───────────────────────────────────────────────────────────
-
-async def init_db(db_path: str = _DEFAULT_DB) -> None:
-    """Create the issues table and indexes if they don't exist."""
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(_CREATE_TABLE)
-        await db.execute(_CREATE_WORKSPACES)
-        await db.execute(_CREATE_USERS)
-        await db.execute(_CREATE_WORKSPACE_USERS)
-        await db.execute(_CREATE_INTEGRATIONS)
-        await db.execute(_CREATE_DEVELOPER_CONFIGS)
-        await db.execute(_CREATE_QA_REPORTS)
-        await db.execute(_CREATE_QA_CONFIGS)
-        await db.execute(_CREATE_REPO_CONFIGS)
-        await db.execute(_CREATE_WEBHOOK_DELIVERIES)
-        await db.execute(_CREATE_AUDIT_EVENTS)
-        await db.execute(_CREATE_ROLLBACKS)
-        await db.execute(_CREATE_RESOLUTIONS)
-        await _ensure_column(db, "issues", "repo_name", "TEXT")
-        await _ensure_column(db, "qa_reports", "triage", "TEXT")
-        await _ensure_column(db, "qa_reports", "required_agents", "TEXT")
-        await _ensure_column(db, "qa_reports", "advisory_agents", "TEXT")
-        await _ensure_column(db, "qa_reports", "artifacts", "TEXT")
-        for column, definition in {
-            "environment": "TEXT",
-            "deployment_ref": "TEXT",
-            "deployment_url": "TEXT",
-            "rollback_mode": "TEXT",
-            "rollback_strategy": "TEXT",
-            "approved_by": "TEXT",
-            "approved_at": "TIMESTAMP",
-            "approval_reason": "TEXT",
-        }.items():
-            await _ensure_column(db, "rollbacks", column, definition)
-        for idx_sql in _CREATE_INDEXES:
-            await db.execute(idx_sql)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_qa_reports_workspace ON qa_reports(workspace_id);"
+def _warn_db_path(db_path: str) -> None:
+    global _LEGACY_WARNING_SHOWN
+    if not _LEGACY_WARNING_SHOWN and db_path and db_path != "./slothops.db":
+        logger.warning(
+            "database.py: db_path=%r is ignored. All operations target PostgreSQL via DATABASE_URL.",
+            db_path,
         )
-        await db.commit()
+        _LEGACY_WARNING_SHOWN = True
 
 
-async def create_issue(issue: IssueRecord, db_path: str = _DEFAULT_DB) -> None:
-    """Insert a new issue record."""
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            """
-            INSERT INTO issues (
-                id, workspace_id, repo_name, fingerprint, error_type, error_message, file_path,
-                function_name, line_number, stack_trace, raw_payload,
-                occurrence_count, classification, confidence, status,
-                fix_pr_url, fix_pr_branch, root_cause, recommendation,
-                previous_fix_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                issue.id,
-                issue.workspace_id,
-                issue.repo_name,
-                issue.fingerprint,
-                issue.error_type,
-                issue.error_message,
-                issue.file_path,
-                issue.function_name,
-                issue.line_number,
-                issue.stack_trace,
-                issue.raw_payload,
-                issue.occurrence_count,
-                issue.classification,
-                issue.confidence,
-                issue.status,
-                issue.fix_pr_url,
-                issue.fix_pr_branch,
-                issue.root_cause,
-                issue.recommendation,
-                issue.previous_fix_id,
-                issue.created_at.isoformat(),
-                issue.updated_at.isoformat(),
-            ),
-        )
-        await db.commit()
+# ── Init (no-op — Alembic handles schema) ───────────────────────────────
+
+async def init_db(db_path: str = "./slothops.db") -> None:
+    """No-op: schema is managed by Alembic migrations."""
+    _warn_db_path(db_path)
+    logger.info("init_db() called — schema managed by Alembic, skipping.")
 
 
-async def get_issue(issue_id: str, workspace_id: str, db_path: str = _DEFAULT_DB) -> Optional[IssueRecord]:
-    """Fetch a single issue by its ID, scoped to a workspace."""
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM issues WHERE id = ? AND workspace_id = ?", (issue_id, workspace_id)) as cursor:
-            row = await cursor.fetchone()
-            return _row_to_issue(row) if row else None
+# ── Issues ───────────────────────────────────────────────────────────────
+
+async def create_issue(issue: IssueRecord, db_path: str = "./slothops.db") -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.create_issue(session, issue)
+        await session.commit()
 
 
-async def get_issue_by_fingerprint(fingerprint: str, workspace_id: str, db_path: str = _DEFAULT_DB) -> Optional[IssueRecord]:
-    """Fetch the most recent issue with a given fingerprint for a workspace."""
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM issues WHERE fingerprint = ? AND workspace_id = ? ORDER BY created_at DESC LIMIT 1",
-            (fingerprint, workspace_id),
-        ) as cursor:
-            row = await cursor.fetchone()
-            return _row_to_issue(row) if row else None
+async def get_issue(
+    issue_id: str, workspace_id: str, db_path: str = "./slothops.db"
+) -> Optional[IssueRecord]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_issue(session, issue_id, workspace_id)
+
+
+async def get_issue_by_fingerprint(
+    fingerprint: str, workspace_id: str, db_path: str = "./slothops.db"
+) -> Optional[IssueRecord]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_issue_by_fingerprint(session, fingerprint, workspace_id)
 
 
 async def update_issue_status(
-    issue_id: str,
-    db_path: str = _DEFAULT_DB,
-    **kwargs: str | int | None,
+    issue_id: str, db_path: str = "./slothops.db", **kwargs
 ) -> None:
-    """Update one or more columns on an issue record."""
-    if not kwargs:
-        return
-    kwargs["updated_at"] = datetime.utcnow().isoformat()
-    set_clause = ", ".join(f"{k} = ?" for k in kwargs)
-    values = list(kwargs.values()) + [issue_id]
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            f"UPDATE issues SET {set_clause} WHERE id = ?",
-            values,
-        )
-        await db.commit()
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.update_issue_status(session, issue_id, **kwargs)
+        await session.commit()
 
 
 async def increment_occurrence(
-    issue_id: str, workspace_id: str, db_path: str = _DEFAULT_DB
+    issue_id: str, workspace_id: str, db_path: str = "./slothops.db"
 ) -> None:
-    """Bump occurrence_count by 1."""
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            "UPDATE issues SET occurrence_count = occurrence_count + 1, updated_at = ? WHERE id = ? AND workspace_id = ?",
-            (datetime.utcnow().isoformat(), issue_id, workspace_id),
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.increment_occurrence(session, issue_id, workspace_id)
+        await session.commit()
+
+
+async def list_issues(
+    workspace_id: str, db_path: str = "./slothops.db"
+) -> list[IssueRecord]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.list_issues(session, workspace_id)
+
+
+# ── Users & Auth ─────────────────────────────────────────────────────────
+
+async def create_user(user: User, db_path: str = "./slothops.db") -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.create_user(session, user)
+        await session.commit()
+
+
+async def get_user_by_email(
+    email: str, db_path: str = "./slothops.db"
+) -> Optional[User]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_user_by_email(session, email)
+
+
+# ── Workspaces ───────────────────────────────────────────────────────────
+
+async def create_workspace(
+    workspace: Workspace, db_path: str = "./slothops.db"
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.create_workspace(session, workspace)
+        await session.commit()
+
+
+async def add_user_to_workspace(
+    workspace_id: str,
+    user_id: str,
+    role: str = "admin",
+    db_path: str = "./slothops.db",
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.add_user_to_workspace(session, workspace_id, user_id, role)
+        await session.commit()
+
+
+async def get_user_workspaces(
+    user_id: str, db_path: str = "./slothops.db"
+) -> list[Workspace]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_user_workspaces(session, user_id)
+
+
+async def list_workspaces(db_path: str = "./slothops.db") -> list[Workspace]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.list_workspaces(session)
+
+
+# ── Integrations ─────────────────────────────────────────────────────────
+
+async def get_integration(
+    workspace_id: str, db_path: str = "./slothops.db"
+) -> Optional[Integration]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_integration(session, workspace_id)
+
+
+async def upsert_integration(
+    integration: Integration, db_path: str = "./slothops.db"
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.upsert_integration(session, integration)
+        await session.commit()
+
+
+async def get_workspace_by_installation_id(
+    installation_id: str, db_path: str = "./slothops.db"
+) -> Optional[str]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_workspace_by_installation_id(session, installation_id)
+
+
+# ── Repo Configs ─────────────────────────────────────────────────────────
+
+async def upsert_repo_config(
+    config: RepoConfig, db_path: str = "./slothops.db"
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.upsert_repo_config(session, config)
+        await session.commit()
+
+
+async def get_repo_config(
+    workspace_id: str, repo_name: str, db_path: str = "./slothops.db"
+) -> Optional[RepoConfig]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_repo_config(session, workspace_id, repo_name)
+
+
+async def get_active_repo_config(
+    workspace_id: str, db_path: str = "./slothops.db"
+) -> Optional[RepoConfig]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_active_repo_config(session, workspace_id)
+
+
+async def get_repo_config_by_sentry_project(
+    workspace_id: str,
+    sentry_project_slug: str,
+    db_path: str = "./slothops.db",
+) -> Optional[RepoConfig]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_repo_config_by_sentry_project(
+            session, workspace_id, sentry_project_slug
         )
-        await db.commit()
 
 
-async def create_user(user, db_path: str = _DEFAULT_DB) -> None:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            "INSERT INTO users (id, email, hashed_password, created_at) VALUES (?, ?, ?, ?)",
-            (user.id, user.email, user.hashed_password, user.created_at.isoformat())
-        )
-        await db.commit()
-
-async def get_user_by_email(email: str, db_path: str = _DEFAULT_DB):
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM users WHERE email = ?", (email,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                from models import User
-                d = dict(row)
-                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
-                return User(**d)
-            return None
-
-async def create_workspace(workspace, db_path: str = _DEFAULT_DB) -> None:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            "INSERT INTO workspaces (id, name, created_at) VALUES (?, ?, ?)",
-            (workspace.id, workspace.name, workspace.created_at.isoformat())
-        )
-        await db.commit()
-
-async def add_user_to_workspace(workspace_id: str, user_id: str, role: str = "admin", db_path: str = _DEFAULT_DB) -> None:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            "INSERT INTO workspace_users (workspace_id, user_id, role) VALUES (?, ?, ?)",
-            (workspace_id, user_id, role)
-        )
-        await db.commit()
-
-async def get_user_workspaces(user_id: str, db_path: str = _DEFAULT_DB):
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT w.* FROM workspaces w JOIN workspace_users wu ON w.id = wu.workspace_id WHERE wu.user_id = ?",
-            (user_id,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-            res = []
-            from models import Workspace
-            for row in rows:
-                d = dict(row)
-                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
-                res.append(Workspace(**d))
-            return res
-
-async def get_workspace_by_installation_id(installation_id: str, db_path: str = _DEFAULT_DB) -> Optional[str]:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        async with db.execute(
-            "SELECT workspace_id FROM integrations WHERE github_installation_id = ?",
-            (str(installation_id),)
-        ) as cursor:
-            row = await cursor.fetchone()
-            return row[0] if row else None
-
-async def list_workspaces(db_path: str = _DEFAULT_DB):
-    """Return all workspaces (used for auto-linking GitHub installations)."""
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM workspaces") as cursor:
-            rows = await cursor.fetchall()
-            res = []
-            from models import Workspace
-            for row in rows:
-                d = dict(row)
-                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
-                res.append(Workspace(**d))
-            return res
-
-async def get_integration(workspace_id: str, db_path: str = _DEFAULT_DB):
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM integrations WHERE workspace_id = ?", (workspace_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                from models import Integration
-                return Integration(**dict(row))
-            return None
-
-async def upsert_integration(integration, db_path: str = _DEFAULT_DB) -> None:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            """INSERT INTO integrations (workspace_id, github_installation_id, sentry_webhook_secret) 
-               VALUES (?, ?, ?) 
-               ON CONFLICT(workspace_id) DO UPDATE SET 
-               github_installation_id=excluded.github_installation_id,
-               sentry_webhook_secret=excluded.sentry_webhook_secret""",
-            (integration.workspace_id, integration.github_installation_id, integration.sentry_webhook_secret)
-        )
-        await db.commit()
+async def list_repo_configs(
+    workspace_id: str, db_path: str = "./slothops.db"
+) -> list[RepoConfig]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.list_repo_configs(session, workspace_id)
 
 
-async def upsert_repo_config(config: RepoConfig, db_path: str = _DEFAULT_DB) -> None:
-    now = datetime.utcnow().isoformat()
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            """INSERT INTO repo_configs (
-                workspace_id, repo_name, config_json, sentry_project_slug, active, created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(workspace_id, repo_name) DO UPDATE SET
-               config_json=excluded.config_json,
-               sentry_project_slug=excluded.sentry_project_slug,
-               active=excluded.active,
-               updated_at=excluded.updated_at""",
-            (
-                config.workspace_id,
-                config.repo_name,
-                json.dumps(config.config_json),
-                config.sentry_project_slug,
-                1 if config.active else 0,
-                config.created_at.isoformat(),
-                now,
-            ),
-        )
-        await db.commit()
+# ── Developer Config ─────────────────────────────────────────────────────
+
+async def upsert_developer_config(
+    workspace_id: str, config_json: str, db_path: str = "./slothops.db"
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.upsert_developer_config(session, workspace_id, config_json)
+        await session.commit()
 
 
-def _row_to_repo_config(row: aiosqlite.Row) -> RepoConfig:
-    d = dict(row)
-    d["config_json"] = _json_load(d.get("config_json"), {})
-    d["active"] = bool(d.get("active", 1))
-    for dt_field in ("created_at", "updated_at"):
-        if isinstance(d.get(dt_field), str):
-            try:
-                d[dt_field] = datetime.fromisoformat(d[dt_field])
-            except ValueError:
-                d[dt_field] = datetime.utcnow()
-    return RepoConfig(**d)
+async def get_developer_config(
+    workspace_id: str, db_path: str = "./slothops.db"
+) -> Optional[dict]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_developer_config(session, workspace_id)
 
 
-async def get_repo_config(workspace_id: str, repo_name: str, db_path: str = _DEFAULT_DB):
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM repo_configs WHERE workspace_id = ? AND repo_name = ?",
-            (workspace_id, repo_name),
-        ) as cursor:
-            row = await cursor.fetchone()
-            return _row_to_repo_config(row) if row else None
-
-
-async def get_active_repo_config(workspace_id: str, db_path: str = _DEFAULT_DB):
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM repo_configs WHERE workspace_id = ? AND active = 1 ORDER BY updated_at DESC LIMIT 1",
-            (workspace_id,),
-        ) as cursor:
-            row = await cursor.fetchone()
-            return _row_to_repo_config(row) if row else None
-
-
-async def get_repo_config_by_sentry_project(workspace_id: str, sentry_project_slug: str, db_path: str = _DEFAULT_DB):
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT * FROM repo_configs
-               WHERE workspace_id = ? AND sentry_project_slug = ? AND active = 1
-               ORDER BY updated_at DESC LIMIT 1""",
-            (workspace_id, sentry_project_slug),
-        ) as cursor:
-            row = await cursor.fetchone()
-            return _row_to_repo_config(row) if row else None
-
+# ── Webhook Deliveries ────────────────────────────────────────────────────
 
 async def record_webhook_delivery(
     delivery_id: str,
     event_type: str,
-    workspace_id: str | None,
-    repo_name: str | None,
-    db_path: str = _DEFAULT_DB,
+    workspace_id: Optional[str],
+    repo_name: Optional[str],
+    db_path: str = "./slothops.db",
 ) -> bool:
-    """Record a webhook delivery. Returns False if it was already seen."""
-    if not delivery_id:
-        return True
-    try:
-        async with aiosqlite.connect(db_path, timeout=10.0) as db:
-            await db.execute(
-                """INSERT INTO webhook_deliveries (delivery_id, event_type, workspace_id, repo_name, received_at)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (delivery_id, event_type, workspace_id, repo_name, datetime.utcnow().isoformat()),
-            )
-            await db.commit()
-            return True
-    except aiosqlite.IntegrityError:
-        return False
-
-
-async def create_audit_event(event: AuditEvent, db_path: str = _DEFAULT_DB) -> None:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            """INSERT INTO audit_events (
-                id, workspace_id, repo_name, actor, action, target_type, target_id, metadata_json, created_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                event.id,
-                event.workspace_id,
-                event.repo_name,
-                event.actor,
-                event.action,
-                event.target_type,
-                event.target_id,
-                json.dumps(event.metadata_json),
-                event.created_at.isoformat(),
-            ),
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        result = await _crud.record_webhook_delivery(
+            session, delivery_id, event_type, workspace_id, repo_name
         )
-        await db.commit()
+        if result:
+            await session.commit()
+        return result
 
 
-async def list_issues(workspace_id: str, db_path: str = _DEFAULT_DB) -> list[IssueRecord]:
-    """Return all issues for a specific workspace ordered by most recent first."""
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM issues WHERE workspace_id = ? ORDER BY created_at DESC", (workspace_id,)) as cursor:
-            rows = await cursor.fetchall()
-            return [_row_to_issue(row) for row in rows]
+# ── Audit Events ─────────────────────────────────────────────────────────
+
+async def create_audit_event(
+    event: AuditEvent, db_path: str = "./slothops.db"
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.create_audit_event(session, event)
+        await session.commit()
 
 
-async def upsert_developer_config(workspace_id: str, config_json: str, db_path: str = _DEFAULT_DB) -> None:
-    """Save or update developer.json preferences for a workspace."""
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            """INSERT INTO developer_configs (workspace_id, config_json, updated_at)
-               VALUES (?, ?, ?)
-               ON CONFLICT(workspace_id) DO UPDATE SET
-               config_json=excluded.config_json,
-               updated_at=excluded.updated_at""",
-            (workspace_id, config_json, datetime.utcnow().isoformat())
+async def list_audit_events(
+    workspace_id: str,
+    repo_name: Optional[str] = None,
+    action: Optional[str] = None,
+    limit: int = 50,
+    db_path: str = "./slothops.db",
+) -> list[AuditEvent]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.list_audit_events(
+            session, workspace_id, repo_name, action, limit
         )
-        await db.commit()
 
 
-async def get_developer_config(workspace_id: str, db_path: str = _DEFAULT_DB) -> dict | None:
-    """Retrieve developer.json preferences for a workspace."""
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT config_json FROM developer_configs WHERE workspace_id = ?", (workspace_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return json.loads(row["config_json"])
-            return None
+# ── QA Reports ───────────────────────────────────────────────────────────
+
+async def create_qa_report(
+    report: QAReport, db_path: str = "./slothops.db"
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.create_qa_report(session, report)
+        await session.commit()
 
 
-# ── QA Agent CRUD ───────────────────────────────────────────────────────
+async def update_qa_report(
+    report_id: str, db_path: str = "./slothops.db", **kwargs
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.update_qa_report(session, report_id, **kwargs)
+        await session.commit()
 
-async def create_qa_report(report, db_path: str = _DEFAULT_DB) -> None:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            """INSERT INTO qa_reports (
-                id, workspace_id, pr_number, pr_url, commit_sha, repo_name,
-                static_analysis, functionality, stress_test, vapt, regression,
-                performance, triage, required_agents, advisory_agents, artifacts,
-                overall_status, summary, email_sent_to, email_sent_at, created_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                report.id, report.workspace_id, report.pr_number, report.pr_url,
-                report.commit_sha, report.repo_name,
-                json.dumps(report.static_analysis) if report.static_analysis else None,
-                json.dumps(report.functionality) if report.functionality else None,
-                json.dumps(report.stress_test) if report.stress_test else None,
-                json.dumps(report.vapt) if report.vapt else None,
-                json.dumps(report.regression) if report.regression else None,
-                json.dumps(report.performance) if report.performance else None,
-                json.dumps(report.triage) if report.triage else None,
-                json.dumps(report.required_agents),
-                json.dumps(report.advisory_agents),
-                json.dumps(report.artifacts),
-                report.overall_status, report.summary, report.email_sent_to,
-                report.email_sent_at.isoformat() if report.email_sent_at else None,
-                report.created_at.isoformat()
-            )
+
+async def get_qa_reports(
+    workspace_id: str, db_path: str = "./slothops.db"
+) -> list[QAReport]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_qa_reports(session, workspace_id)
+
+
+async def get_qa_report(
+    report_id: str, db_path: str = "./slothops.db"
+) -> Optional[QAReport]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_qa_report(session, report_id)
+
+
+# ── Rollbacks ────────────────────────────────────────────────────────────
+
+async def create_rollback(
+    record: RollbackRecord, db_path: str = "./slothops.db"
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.create_rollback(session, record)
+        await session.commit()
+
+
+async def update_rollback(
+    rollback_id: str, db_path: str = "./slothops.db", **kwargs
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.update_rollback(session, rollback_id, **kwargs)
+        await session.commit()
+
+
+async def get_rollbacks(
+    workspace_id: str, db_path: str = "./slothops.db"
+) -> list[RollbackRecord]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_rollbacks(session, workspace_id)
+
+
+async def get_rollback(
+    rollback_id: str, db_path: str = "./slothops.db"
+) -> Optional[RollbackRecord]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_rollback(session, rollback_id)
+
+
+async def get_rollback_by_backup_branch(
+    backup_branch: str, db_path: str = "./slothops.db"
+) -> Optional[RollbackRecord]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_rollback_by_backup_branch(session, backup_branch)
+
+
+async def get_rollback_by_failed_sha(
+    workspace_id: str,
+    repo_name: str,
+    sha: str,
+    db_path: str = "./slothops.db",
+) -> Optional[RollbackRecord]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_rollback_by_failed_sha(
+            session, workspace_id, repo_name, sha
         )
-        await db.commit()
-
-async def update_qa_report(report_id: str, db_path: str = _DEFAULT_DB, **kwargs) -> None:
-    if not kwargs:
-        return
-    sets = []
-    values = []
-    for k, v in kwargs.items():
-        sets.append(f"{k} = ?")
-        if isinstance(v, (dict, list)):
-            values.append(json.dumps(v))
-        elif isinstance(v, datetime):
-            values.append(v.isoformat())
-        else:
-            values.append(v)
-    
-    values.append(report_id)
-    query = f"UPDATE qa_reports SET {', '.join(sets)} WHERE id = ?"
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(query, tuple(values))
-        await db.commit()
-
-async def get_qa_reports(workspace_id: str, db_path: str = _DEFAULT_DB) -> list:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM qa_reports WHERE workspace_id = ? ORDER BY created_at DESC", (workspace_id,)) as cursor:
-            rows = await cursor.fetchall()
-            from models import QAReport
-            res = []
-            for r in rows:
-                d = dict(r)
-                for json_col in ('static_analysis', 'functionality', 'stress_test', 'vapt', 'regression', 'performance', 'triage', 'required_agents', 'advisory_agents', 'artifacts'):
-                    if d.get(json_col):
-                        d[json_col] = json.loads(d[json_col])
-                res.append(QAReport(**d))
-            return res
-
-async def get_qa_report(report_id: str, db_path: str = _DEFAULT_DB):
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM qa_reports WHERE id = ?", (report_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                from models import QAReport
-                d = dict(row)
-                for json_col in ('static_analysis', 'functionality', 'stress_test', 'vapt', 'regression', 'performance', 'triage', 'required_agents', 'advisory_agents', 'artifacts'):
-                    if d.get(json_col):
-                        d[json_col] = json.loads(d[json_col])
-                return QAReport(**d)
-            return None
-
-# ── Rollbacks CRUD ───────────────────────────────────────────────────────
-
-async def create_rollback(record, db_path: str = _DEFAULT_DB) -> None:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            """INSERT INTO rollbacks (
-                id, workspace_id, repo_name, failed_commit_sha, rolled_back_to_sha,
-                backup_branch, pr_number, pr_url, environment, deployment_ref,
-                deployment_url, rollback_mode, rollback_strategy, approved_by,
-                approved_at, approval_reason, failure_reason, status,
-                created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                record.id, record.workspace_id, record.repo_name, record.failed_commit_sha,
-                record.rolled_back_to_sha, record.backup_branch, record.pr_number, record.pr_url,
-                record.environment, record.deployment_ref, record.deployment_url,
-                record.rollback_mode, record.rollback_strategy, record.approved_by,
-                record.approved_at.isoformat() if record.approved_at else None,
-                record.approval_reason,
-                record.failure_reason, record.status,
-                record.created_at.isoformat(), record.updated_at.isoformat()
-            )
-        )
-        await db.commit()
-
-async def update_rollback(rollback_id: str, db_path: str = _DEFAULT_DB, **kwargs) -> None:
-    if not kwargs:
-        return
-    kwargs["updated_at"] = datetime.utcnow().isoformat()
-    sets = []
-    values = []
-    for k, v in kwargs.items():
-        sets.append(f"{k} = ?")
-        if isinstance(v, datetime):
-            values.append(v.isoformat())
-        else:
-            values.append(v)
-    
-    values.append(rollback_id)
-    query = f"UPDATE rollbacks SET {', '.join(sets)} WHERE id = ?"
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(query, tuple(values))
-        await db.commit()
-
-async def get_rollbacks(workspace_id: str, db_path: str = _DEFAULT_DB) -> list:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM rollbacks WHERE workspace_id = ? ORDER BY created_at DESC", (workspace_id,)) as cursor:
-            rows = await cursor.fetchall()
-            from models import RollbackRecord
-            res = []
-            for r in rows:
-                d = dict(r)
-                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
-                d["updated_at"] = datetime.fromisoformat(d["updated_at"]) if isinstance(d.get("updated_at"), str) else d.get("updated_at", datetime.utcnow())
-                d["approved_at"] = datetime.fromisoformat(d["approved_at"]) if isinstance(d.get("approved_at"), str) and d.get("approved_at") else None
-                res.append(RollbackRecord(**d))
-            return res
-
-async def get_rollback(rollback_id: str, db_path: str = _DEFAULT_DB):
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM rollbacks WHERE id = ?", (rollback_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                from models import RollbackRecord
-                d = dict(row)
-                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
-                d["updated_at"] = datetime.fromisoformat(d["updated_at"]) if isinstance(d.get("updated_at"), str) else d.get("updated_at", datetime.utcnow())
-                d["approved_at"] = datetime.fromisoformat(d["approved_at"]) if isinstance(d.get("approved_at"), str) and d.get("approved_at") else None
-                return RollbackRecord(**d)
-            return None
-
-async def get_rollback_by_backup_branch(backup_branch: str, db_path: str = _DEFAULT_DB):
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM rollbacks WHERE backup_branch = ?", (backup_branch,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                from models import RollbackRecord
-                d = dict(row)
-                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
-                d["updated_at"] = datetime.fromisoformat(d["updated_at"]) if isinstance(d.get("updated_at"), str) else d.get("updated_at", datetime.utcnow())
-                d["approved_at"] = datetime.fromisoformat(d["approved_at"]) if isinstance(d.get("approved_at"), str) and d.get("approved_at") else None
-                return RollbackRecord(**d)
-            return None
-
-
-async def get_rollback_by_failed_sha(workspace_id: str, repo_name: str, sha: str, db_path: str = _DEFAULT_DB):
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT * FROM rollbacks
-               WHERE workspace_id = ? AND repo_name = ? AND failed_commit_sha = ?
-               ORDER BY created_at DESC LIMIT 1""",
-            (workspace_id, repo_name, sha),
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                from models import RollbackRecord
-                d = dict(row)
-                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
-                d["updated_at"] = datetime.fromisoformat(d["updated_at"]) if isinstance(d.get("updated_at"), str) else d.get("updated_at", datetime.utcnow())
-                d["approved_at"] = datetime.fromisoformat(d["approved_at"]) if isinstance(d.get("approved_at"), str) and d.get("approved_at") else None
-                return RollbackRecord(**d)
-            return None
 
 
 async def approve_rollback(
     rollback_id: str,
     approved_by: str,
     reason: str,
-    db_path: str = _DEFAULT_DB,
+    db_path: str = "./slothops.db",
 ) -> None:
-    from models import RollbackStatus
-
-    await update_rollback(
-        rollback_id,
-        db_path,
-        status=RollbackStatus.APPROVED.value,
-        approved_by=approved_by,
-        approved_at=datetime.utcnow(),
-        approval_reason=reason,
-    )
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.approve_rollback(session, rollback_id, approved_by, reason)
+        await session.commit()
 
 
-# ── Resolutions CRUD ───────────────────────────────────────────────────────
+# ── Resolutions ───────────────────────────────────────────────────────────
 
-async def create_resolution(record, db_path: str = _DEFAULT_DB) -> None:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(
-            """INSERT INTO resolutions (
-                id, rollback_id, workspace_id, repo_name, backup_branch,
-                resolution_pr_url, resolution_pr_number, attempt_number,
-                build_error_log, status, created_at, updated_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                record.id, record.rollback_id, record.workspace_id, record.repo_name, record.backup_branch,
-                record.resolution_pr_url, record.resolution_pr_number, record.attempt_number,
-                record.build_error_log, record.status, record.created_at.isoformat(), record.updated_at.isoformat()
-            )
-        )
-        await db.commit()
+async def create_resolution(
+    record: ResolutionRecord, db_path: str = "./slothops.db"
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.create_resolution(session, record)
+        await session.commit()
 
-async def update_resolution(resolution_id: str, db_path: str = _DEFAULT_DB, **kwargs) -> None:
-    if not kwargs:
-        return
-    kwargs["updated_at"] = datetime.utcnow().isoformat()
-    sets = []
-    values = []
-    for k, v in kwargs.items():
-        sets.append(f"{k} = ?")
-        if isinstance(v, datetime):
-            values.append(v.isoformat())
-        else:
-            values.append(v)
-    
-    values.append(resolution_id)
-    query = f"UPDATE resolutions SET {', '.join(sets)} WHERE id = ?"
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        await db.execute(query, tuple(values))
-        await db.commit()
 
-async def get_resolutions_for_rollback(rollback_id: str, db_path: str = _DEFAULT_DB) -> list:
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM resolutions WHERE rollback_id = ? ORDER BY attempt_number DESC", (rollback_id,)) as cursor:
-            rows = await cursor.fetchall()
-            from models import ResolutionRecord
-            res = []
-            for r in rows:
-                d = dict(r)
-                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
-                d["updated_at"] = datetime.fromisoformat(d["updated_at"]) if isinstance(d.get("updated_at"), str) else d.get("updated_at", datetime.utcnow())
-                res.append(ResolutionRecord(**d))
-            return res
+async def update_resolution(
+    resolution_id: str, db_path: str = "./slothops.db", **kwargs
+) -> None:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        await _crud.update_resolution(session, resolution_id, **kwargs)
+        await session.commit()
 
-async def get_resolution(resolution_id: str, db_path: str = _DEFAULT_DB):
-    async with aiosqlite.connect(db_path, timeout=10.0) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM resolutions WHERE id = ?", (resolution_id,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                from models import ResolutionRecord
-                d = dict(row)
-                d["created_at"] = datetime.fromisoformat(d["created_at"]) if isinstance(d.get("created_at"), str) else d.get("created_at", datetime.utcnow())
-                d["updated_at"] = datetime.fromisoformat(d["updated_at"]) if isinstance(d.get("updated_at"), str) else d.get("updated_at", datetime.utcnow())
-                return ResolutionRecord(**d)
-            return None
+
+async def get_resolutions_for_rollback(
+    rollback_id: str, db_path: str = "./slothops.db"
+) -> list[ResolutionRecord]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_resolutions_for_rollback(session, rollback_id)
+
+
+async def get_resolution(
+    resolution_id: str, db_path: str = "./slothops.db"
+) -> Optional[ResolutionRecord]:
+    _warn_db_path(db_path)
+    async with async_session_factory() as session:
+        return await _crud.get_resolution(session, resolution_id)
