@@ -1,0 +1,32 @@
+# Keep the Docker build context lean.
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local DB / logs / secrets
+*.db
+*.sqlite*
+*.log
+.env
+.env.local
+
+# Node / Vite artifacts (re-built inside the web-builder stage)
+web/node_modules/
+web/dist/
+
+# Git
+.git/
+.gitignore
+
+# Editor noise
+.vscode/
+.idea/
+.DS_Store
+
+# Docs and archives — not needed at runtime
+docs/

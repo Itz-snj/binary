@@ -112,7 +112,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+WEB_DIST_DIR = os.path.join(os.path.dirname(__file__), "web", "dist")
 
 # ── Auth & Security ──────────────────────────────────────────────────────
 from fastapi import Depends, HTTPException, status
@@ -142,27 +142,30 @@ app.include_router(webhooks_router)
 
 @app.get("/")
 async def serve_dashboard():
-    index_path = os.path.join(STATIC_DIR, "index.html")
+    index_path = os.path.join(WEB_DIST_DIR, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
-    return JSONResponse({"message": "Dashboard not built yet. See Phase 3."})
+    return JSONResponse({
+        "message": "Dashboard build not found.",
+        "hint": "Run `cd web && bun install && bun run build`, or use the Docker image which builds it automatically.",
+    })
 
-@app.get("/style.css")
-async def serve_css():
-    css_path = os.path.join(STATIC_DIR, "style.css")
-    if os.path.exists(css_path):
-        return FileResponse(css_path)
-    return JSONResponse({"error": "Not found"}, status_code=404)
-
-@app.get("/static/{file_path:path}")
-async def serve_static(file_path: str):
-    """Serve static assets (images, fonts, etc.) from the static directory."""
+@app.get("/assets/{file_path:path}")
+async def serve_web_assets(file_path: str):
+    """Serve Vite-built assets (JS/CSS bundles, fonts) from web/dist/assets."""
     safe_path = os.path.normpath(file_path)
     if safe_path.startswith(".."):
         return JSONResponse({"error": "Forbidden"}, status_code=403)
-    full_path = os.path.join(STATIC_DIR, safe_path)
+    full_path = os.path.join(WEB_DIST_DIR, "assets", safe_path)
     if os.path.exists(full_path) and os.path.isfile(full_path):
         return FileResponse(full_path)
+    return JSONResponse({"error": "Not found"}, status_code=404)
+
+@app.get("/logo.png")
+async def serve_logo():
+    logo_path = os.path.join(WEB_DIST_DIR, "logo.png")
+    if os.path.exists(logo_path):
+        return FileResponse(logo_path)
     return JSONResponse({"error": "Not found"}, status_code=404)
 
 

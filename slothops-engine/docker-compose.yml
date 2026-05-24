@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -17,6 +15,28 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: slothops-engine:local
+    container_name: slothops_engine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Container-internal URLs override .env so the engine talks to the
+      # postgres service via its compose-network hostname.
+      DATABASE_URL: postgresql+asyncpg://slothops:slothops_dev@postgres:5432/slothops
+      DIRECT_DATABASE_URL: postgresql+psycopg://slothops:slothops_dev@postgres:5432/slothops
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: "8000"
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
     restart: unless-stopped
 
 volumes:
