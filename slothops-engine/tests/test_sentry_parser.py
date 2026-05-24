@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import json
 from pathlib import Path
 
-from sentry_parser import parse_sentry_webhook
+from app.integrations.sentry_parser import parse_sentry_webhook
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"

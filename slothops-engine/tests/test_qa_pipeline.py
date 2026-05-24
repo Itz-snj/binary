@@ -17,8 +17,8 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(levelname)s
 # ───────────────────────────────────────────────────────
 async def test_database():
     print("\n═══ TEST: Database Layer ═══")
-    import database as db
-    from models import QAReport, QAStatus
+    from app import database as db
+    from app.models import QAReport, QAStatus
     
     test_db = "/tmp/test_qa.db"
     if os.path.exists(test_db):
@@ -66,7 +66,7 @@ async def test_database():
 # ───────────────────────────────────────────────────────
 async def test_static_analysis():
     print("═══ TEST: Static Analysis Agent ═══")
-    from qa_agents.static_analysis import run_static_analysis, detect_tech_stack
+    from app.qa_agents.static_analysis import run_static_analysis, detect_tech_stack
     
     # Create a fake Node.js project
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -108,7 +108,7 @@ async def test_static_analysis():
 # ───────────────────────────────────────────────────────
 async def test_vapt():
     print("═══ TEST: VAPT Agent ═══")
-    from qa_agents.vapt import run_vapt_scan
+    from app.qa_agents.vapt import run_vapt_scan
     
     # Test with a Node.js project (npm audit)
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -132,7 +132,7 @@ async def test_vapt():
 # ───────────────────────────────────────────────────────
 async def test_stress():
     print("═══ TEST: Stress Test Agent ═══")
-    from qa_agents.stress_test import run_stress_test
+    from app.qa_agents.stress_test import run_stress_test
     
     # Test with a non-Node directory (should skip gracefully)
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -161,7 +161,7 @@ async def test_stress():
 # ───────────────────────────────────────────────────────
 async def test_functionality():
     print("═══ TEST: Functionality Agent ═══")
-    from qa_agents.functionality import run_functionality_tests
+    from app.qa_agents.functionality import run_functionality_tests
     
     # Test with empty changed files — should just skip
     result = await run_functionality_tests("/tmp", [], "fake-key")

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-import database as db
-from models import RepoConfig
-from sentry_parser import parse_sentry_webhook
+from app import database as db
+from app.models import RepoConfig
+from app.integrations.sentry_parser import parse_sentry_webhook
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"

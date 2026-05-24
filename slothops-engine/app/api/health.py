@@ -37,7 +37,7 @@ async def health_engine() -> dict[str, str]:
 @router.get("/api/health/llm")
 async def health_llm(workspace_id: str = Depends(get_current_workspace)) -> dict:
     try:
-        from genai_client import health_check
+        from app.llm.client import health_check
         return await health_check()
     except Exception as e:
         logger.error("LLM health check failed: %s", e)

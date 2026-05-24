@@ -4,8 +4,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 
-import database as db
-from models import AuditEvent, RepoConfig
+from app import database as db
+from app.models import AuditEvent, RepoConfig
 
 
 @pytest.mark.asyncio

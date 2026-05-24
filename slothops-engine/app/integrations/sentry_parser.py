@@ -10,7 +10,7 @@ import json
 import uuid
 from typing import Any, Dict, Optional
 
-from models import CallFrame, IssueRecord, IssueStatus
+from app.models import CallFrame, IssueRecord, IssueStatus
 
 
 def _extract_frames(payload: dict) -> list[dict]:

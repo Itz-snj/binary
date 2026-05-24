@@ -13,18 +13,18 @@ import logging
 import os
 from typing import Optional
 
-import database as db
-from classifier import classify
-from code_fetcher import fetch_code_context, fetch_deep_code_context
+from app import database as db
+from app.llm.classifier import classify
+from app.code_analysis.code_fetcher import fetch_code_context, fetch_deep_code_context
 import asyncio
 import uuid
-from fingerprint import check_dedup, compute_fingerprint
-from github_automation import create_fix_pr
-from github_app import get_repo_for_installation
-from llm_fixer import generate_fix, generate_infra_recommendation
-from models import AuditAction, AuditEvent, CallFrame, DedupeAction, IssueRecord, IssueStatus
-from redactor import redact
-from sse_manager import broadcast
+from app.code_analysis.fingerprint import check_dedup, compute_fingerprint
+from app.integrations.github_automation import create_fix_pr
+from app.integrations.github_app import get_repo_for_installation
+from app.llm.fixer import generate_fix, generate_infra_recommendation
+from app.models import AuditAction, AuditEvent, CallFrame, DedupeAction, IssueRecord, IssueStatus
+from app.code_analysis.redactor import redact
+from app.sse_manager import broadcast
 
 logger = logging.getLogger("slothops.pipeline")
 
@@ -292,8 +292,8 @@ async def run_pipeline(
                         issue.id[:8], fix.confidence, len(fix.generated_tests))
             await _update(issue, db_path, "validating_fix")
             
-            from test_runner import validate_fix
-            from llm_fixer import retry_fix_with_test_failure
+            from tests.test_runner import validate_fix
+            from app.llm.fixer import retry_fix_with_test_failure
             
             test_passed, test_output = await asyncio.to_thread(
                 validate_fix, fix, repo, installation_auth.token
@@ -392,8 +392,8 @@ async def run_pipeline(
 
         # ── 8. Style & Code Review ─────────────────────────────────────────
         try:
-            from style_reviewer import review_against_preferences
-            from github_automation import post_style_review_comments
+            from app.llm.style_reviewer import review_against_preferences
+            from app.integrations.github_automation import post_style_review_comments
             dev_config = await db.get_developer_config(issue.workspace_id, db_path)
             if dev_config:
                 logger.info("[%s] 🎨 Running style review against developer.json...", issue.id[:8])
@@ -408,8 +408,8 @@ async def run_pipeline(
                 logger.info("[%s] No developer.json configured — skipping style review", issue.id[:8])
                     
             # ── 9. Architecture / Logic Review ─────────────────────────
-            from code_reviewer import review_pr_code
-            from github_automation import post_general_pr_comment
+            from app.llm.code_reviewer import review_pr_code
+            from app.integrations.github_automation import post_general_pr_comment
             logger.info("[%s] 🧠 Running architecture code review...", issue.id[:8])
             
             # Try to grab AI_CONTEXT.md

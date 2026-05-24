@@ -12,10 +12,10 @@ import uuid
 
 from fastapi import APIRouter, Depends
 
-import database as db
+from app import database as db
 from app.core.config import load_settings
 from app.core.security import get_current_workspace
-from models import AuditAction, AuditEvent, RepoConfig, RepoConfigRequest
+from app.models import AuditAction, AuditEvent, RepoConfig, RepoConfigRequest
 
 logger = logging.getLogger("slothops.api.repos")
 
@@ -50,7 +50,7 @@ async def list_repos(workspace_id: str = Depends(get_current_workspace)):
             "message": "GitHub App not linked. Use /api/github/link.",
         }
     try:
-        from github_app import get_integration as _get_gh_integration
+        from app.integrations.github_app import get_integration as _get_gh_integration
         gi = _get_gh_integration(settings.github_app_id, settings.github_app_private_key)
         inst = gi.get_app_installation(int(integration.github_installation_id))
         gh_repos = list(inst.get_repos())
@@ -136,7 +136,7 @@ async def get_repo_policy(
     workspace_id: str = Depends(get_current_workspace),
 ):
     """Return the effective merged policy (defaults + repo overrides)."""
-    from policy import get_effective_policy
+    from app.policy import get_effective_policy
 
     settings = load_settings()
     repo_name = f"{owner}/{repo}"
@@ -158,7 +158,7 @@ async def run_preflight(
     workspace_id: str = Depends(get_current_workspace),
 ):
     """Non-destructive readiness check — returns structured pass/warning/fail results."""
-    from models import PreflightCheck
+    from app.models import PreflightCheck
 
     settings = load_settings()
     repo_name = f"{owner}/{repo}"
@@ -185,7 +185,7 @@ async def run_preflight(
     # 2. Repo accessible + default branch
     repo_obj = None
     try:
-        from github_app import get_repo_for_installation
+        from app.integrations.github_app import get_repo_for_installation
         repo_obj, _ = get_repo_for_installation(
             settings.github_app_id, settings.github_app_private_key,
             integration.github_installation_id, repo_name,
@@ -215,7 +215,7 @@ async def run_preflight(
 
     # 3. GitHub App permissions
     try:
-        from github_app import get_integration as _ghi
+        from app.integrations.github_app import get_integration as _ghi
         gi = _ghi(settings.github_app_id, settings.github_app_private_key)
         inst = gi.get_app_installation(int(integration.github_installation_id))
         perms = inst.raw_data.get("permissions", {})

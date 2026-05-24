@@ -13,10 +13,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-import database as db
+from app import database as db
 from app.core.config import load_settings
 from app.core.security import get_current_workspace
-from sse_manager import broadcast
+from app.sse_manager import broadcast
 
 logger = logging.getLogger("slothops.api.qa")
 
@@ -51,7 +51,7 @@ async def bypass_qa(
     req: QABypassRequest,
     workspace_id: str = Depends(get_current_workspace),
 ):
-    from models import QAStatus
+    from app.models import QAStatus
 
     settings = load_settings()
     report = await db.get_qa_report(report_id, settings.database_path)
@@ -73,8 +73,8 @@ async def bypass_qa(
     try:
         integration = await db.get_integration(workspace_id, settings.database_path)
         if integration and integration.github_installation_id:
-            from github_app import get_repo_for_installation
-            from qa_pipeline import _set_commit_status
+            from app.integrations.github_app import get_repo_for_installation
+            from app.pipelines.qa_pipeline import _set_commit_status
             repo, _ = get_repo_for_installation(
                 settings.github_app_id,
                 settings.github_app_private_key,
@@ -119,7 +119,7 @@ async def resolve_qa(
     )
     asyncio.create_task(broadcast("qa_update", {"id": report_id, "status": "resolving"}))
 
-    from qa_resolution import request_qa_resolution
+    from app.pipelines.qa_resolution import request_qa_resolution
     asyncio.create_task(request_qa_resolution(
         report_id=report_id,
         workspace_id=workspace_id,

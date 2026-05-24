@@ -4,7 +4,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 
-import genai_client
+from app.llm import client as genai_client
 
 
 def _clear_provider_keys(monkeypatch):

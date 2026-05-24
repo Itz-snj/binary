@@ -6,7 +6,7 @@ import os
 from copy import deepcopy
 from typing import Any
 
-import database as db
+from app import database as db
 
 
 DEFAULT_POLICY: dict[str, Any] = {

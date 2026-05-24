@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from models import QATriageResult
+from app.models import QATriageResult
 
 
 DOC_EXTS = {".md", ".mdx", ".txt", ".rst"}

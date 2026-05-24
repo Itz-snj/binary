@@ -10,7 +10,7 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import Optional
 
-from models import DedupeAction, IssueStatus
+from app.models import DedupeAction, IssueStatus
 
 
 # 10-minute cooldown between re-triggers for the same fingerprint

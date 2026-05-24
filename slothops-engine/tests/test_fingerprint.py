@@ -6,8 +6,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from datetime import datetime, timedelta
 
-from fingerprint import compute_fingerprint, check_dedup
-from models import DedupeAction, IssueStatus
+from app.code_analysis.fingerprint import compute_fingerprint, check_dedup
+from app.models import DedupeAction, IssueStatus
 
 
 # ── Fingerprint hashing ─────────────────────────────────────────────────

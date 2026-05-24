@@ -8,7 +8,7 @@ Only "code" errors proceed to fix generation.
 
 from __future__ import annotations
 
-from models import Classification
+from app.models import Classification
 
 # ── Signal lists ─────────────────────────────────────────────────────────
 

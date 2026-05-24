@@ -1,6 +1,6 @@
 import logging
 
-from command_runner import run_command
+from app.code_analysis.command_runner import run_command
 
 logger = logging.getLogger("slothops.qa.regression")
 

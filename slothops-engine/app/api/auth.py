@@ -16,11 +16,11 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 
-import auth as _auth
-import database as db
+from app import auth as _auth
+from app import database as db
 from app.core.security import get_current_workspace, oauth2_scheme
 from app.schemas.auth import AuthSession, SignupRequest
-from models import User, Workspace
+from app.models import User, Workspace
 
 logger = logging.getLogger("slothops.api.auth")
 

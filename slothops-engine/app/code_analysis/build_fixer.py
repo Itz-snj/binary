@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import logging
 
-from genai_client import generate_with_fallback
-from llm_fixer import extract_json_object
-from models import BuildFixResponse
+from app.llm.client import generate_with_fallback
+from app.llm.fixer import extract_json_object
+from app.models import BuildFixResponse
 
 logger = logging.getLogger("slothops.build_fixer")
 

@@ -13,9 +13,9 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from db.engine import async_session_factory
-import db.crud as _crud
-from models import (
+from app.db.engine import async_session_factory
+from app.db import crud as _crud
+from app.models import (
     AuditEvent,
     Integration,
     IssueRecord,

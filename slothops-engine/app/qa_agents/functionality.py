@@ -2,8 +2,8 @@ import json
 import logging
 import os
 
-from genai_client import generate_with_fallback
-from command_runner import run_command
+from app.llm.client import generate_with_fallback
+from app.code_analysis.command_runner import run_command
 
 logger = logging.getLogger("slothops.qa.functionality")
 

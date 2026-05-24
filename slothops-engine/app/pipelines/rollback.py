@@ -13,12 +13,12 @@ import subprocess
 import uuid
 from datetime import datetime
 
-import database as db
-from models import AuditAction, AuditEvent, RollbackMode, RollbackRecord, RollbackStatus, RollbackStrategy
-from github_app import get_repo_for_installation
-from policy import get_effective_policy
-from sse_manager import broadcast
-from email_sender import send_rollback_notification_email
+from app import database as db
+from app.models import AuditAction, AuditEvent, RollbackMode, RollbackRecord, RollbackStatus, RollbackStrategy
+from app.integrations.github_app import get_repo_for_installation
+from app.policy import get_effective_policy
+from app.sse_manager import broadcast
+from app.integrations.email_sender import send_rollback_notification_email
 
 logger = logging.getLogger("slothops.rollback")
 
@@ -272,7 +272,7 @@ async def execute_rollback(
         }, QA_EMAIL_RECIPIENT, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD)
 
     # Trigger Resolution Auto-Fix
-    from resolution import attempt_resolution
+    from app.pipelines.resolution import attempt_resolution
     asyncio.create_task(attempt_resolution(
         rollback_id=rollback_id,
         workspace_id=workspace_id,

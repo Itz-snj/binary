@@ -8,7 +8,7 @@ import os
 import subprocess
 import tempfile
 import logging
-from models import LLMFixResponse
+from app.models import LLMFixResponse
 
 logger = logging.getLogger("slothops.test_runner")
 

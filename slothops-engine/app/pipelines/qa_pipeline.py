@@ -5,20 +5,20 @@ import tempfile
 import subprocess
 from datetime import datetime
 
-import database as db
-from models import QAReport, QAStatus
-from policy import get_effective_policy
-from qa_triage import triage_pr
-from stack_detector import detect_stack
+from app import database as db
+from app.models import QAReport, QAStatus
+from app.policy import get_effective_policy
+from app.pipelines.qa_triage import triage_pr
+from app.code_analysis.stack_detector import detect_stack
 
-from qa_agents.static_analysis import run_static_analysis
-from qa_agents.functionality import run_functionality_tests
-from qa_agents.vapt import run_vapt_scan
-from qa_agents.stress_test import run_stress_test
-from qa_agents.regression import run_regression_tests
-from qa_agents.performance import run_performance_check
-from email_sender import send_qa_report_email
-from github_automation import post_qa_report_comment
+from app.qa_agents.static_analysis import run_static_analysis
+from app.qa_agents.functionality import run_functionality_tests
+from app.qa_agents.vapt import run_vapt_scan
+from app.qa_agents.stress_test import run_stress_test
+from app.qa_agents.regression import run_regression_tests
+from app.qa_agents.performance import run_performance_check
+from app.integrations.email_sender import send_qa_report_email
+from app.integrations.github_automation import post_qa_report_comment
 import json
 
 SMTP_HOST = os.getenv("SMTP_HOST", "")
@@ -72,7 +72,7 @@ async def run_qa_pipeline(
     logger.info("🚀 Starting QA Pipeline for PR #%s in %s (SHA: %s)...", pr_number, repo_name, commit_sha[:8])
     
     try:
-        from github_app import get_repo_for_installation
+        from app.integrations.github_app import get_repo_for_installation
         repo, installation_auth = get_repo_for_installation(
             github_app_id, github_app_private_key, installation_id, repo_name
         )
@@ -297,7 +297,7 @@ async def run_qa_pipeline(
                         "Then, provide code snippets or concrete recommendations to fix the issues.\n\n"
                         f"Error Logs:\n{error_context}"
                     )
-                    from genai_client import generate_with_fallback
+                    from app.llm.client import generate_with_fallback
                     fix_resp_text, _ = await generate_with_fallback(
                         prompt=fix_prompt
                     )

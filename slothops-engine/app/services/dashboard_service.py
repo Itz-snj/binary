@@ -10,7 +10,7 @@ import logging
 import os
 from collections import Counter
 
-import database as db
+from app import database as db
 from app.schemas.dashboard import (
     DashboardActivityItem,
     DashboardHealthStatus,
@@ -18,7 +18,7 @@ from app.schemas.dashboard import (
     DashboardOverview,
     DashboardRepoCard,
 )
-from models import IssueStatus, QAStatus, RollbackStatus
+from app.models import IssueStatus, QAStatus, RollbackStatus
 
 logger = logging.getLogger("slothops.services.dashboard")
 

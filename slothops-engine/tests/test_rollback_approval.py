@@ -4,9 +4,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 
-import database as db
-from models import RepoConfig, RollbackStatus
-from rollback import plan_rollback
+from app import database as db
+from app.models import RepoConfig, RollbackStatus
+from app.pipelines.rollback import plan_rollback
 
 
 @pytest.mark.asyncio

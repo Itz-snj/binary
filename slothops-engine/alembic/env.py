@@ -16,7 +16,7 @@ from sqlmodel import SQLModel
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import all table models so their metadata is registered
-import db.models  # noqa: F401 — side-effect import registers all tables
+import app.db.models  # noqa: F401 — side-effect import registers all tables
 
 config = context.config
 

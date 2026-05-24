@@ -19,12 +19,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
-import database as db
-from models import AuditAction, AuditEvent, IssueRecord, RollbackStatus
-from pipeline import run_pipeline
-from sentry_parser import parse_sentry_webhook
-from sse_manager import broadcast, subscribe
-from webhook_security import extract_github_delivery_id, verify_github_signature, verify_sentry_signature
+from app import database as db
+from app.models import AuditAction, AuditEvent, IssueRecord, RollbackStatus
+from app.pipelines.pipeline import run_pipeline
+from app.integrations.sentry_parser import parse_sentry_webhook
+from app.sse_manager import broadcast, subscribe
+from app.integrations.webhook_security import extract_github_delivery_id, verify_github_signature, verify_sentry_signature
 # ── Load env early (before config.py import to avoid crash in dev) ───
 from dotenv import load_dotenv
 load_dotenv()
@@ -117,7 +117,7 @@ WEB_DIST_DIR = os.path.join(os.path.dirname(__file__), "web", "dist")
 # ── Auth & Security ──────────────────────────────────────────────────────
 from fastapi import Depends, HTTPException, status
 from pydantic import BaseModel
-import auth
+from app import auth
 import uuid
 from app.core.security import oauth2_scheme, get_current_workspace
 
@@ -181,7 +181,7 @@ async def link_github_installation(req: GithubLinkRequest, workspace_id: str = D
     the GitHub App and is redirected back to the Setup URL.
     Pairs the App Installation mathematically to their verified JWT workspace_id.
     """
-    from models import Integration
+    from app.models import Integration
     # Upsert the integration row
     integration = Integration(
         workspace_id=workspace_id,
@@ -268,7 +268,7 @@ async def integrations_status(workspace_id: str = Depends(get_current_workspace)
 
         # Fetch actual connected repos using the correct GitHub App API
         try:
-            from github_app import get_integration
+            from app.integrations.github_app import get_integration
             gi = get_integration(GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY)
             inst = gi.get_app_installation(int(integration.github_installation_id))
 

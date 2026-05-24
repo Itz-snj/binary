@@ -17,12 +17,12 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-import database as db
+from app import database as db
 from app.core.config import load_settings
-from models import AuditAction, AuditEvent
-from pipeline import run_pipeline
-from sentry_parser import parse_sentry_webhook
-from webhook_security import (
+from app.models import AuditAction, AuditEvent
+from app.pipelines.pipeline import run_pipeline
+from app.integrations.sentry_parser import parse_sentry_webhook
+from app.integrations.webhook_security import (
     extract_github_delivery_id,
     verify_github_signature,
     verify_sentry_signature,
@@ -153,8 +153,8 @@ async def receive_github_webhook(request: Request):
 
     if github_event == "pull_request" and action in ["opened", "synchronize"]:
         if installation_id and workspace_id:
-            from github_automation import handle_human_pr_review
-            from qa_pipeline import run_qa_pipeline
+            from app.integrations.github_automation import handle_human_pr_review
+            from app.pipelines.qa_pipeline import run_qa_pipeline
 
             sender_login = payload.get("sender", {}).get("login", "")
 
@@ -212,7 +212,7 @@ async def receive_github_webhook(request: Request):
                         str(ref), settings.database_path,
                     )
                     if rollback_record:
-                        from resolution import attempt_resolution
+                        from app.pipelines.resolution import attempt_resolution
                         logger.info(
                             "Received re-cycle deployment failure for resolution PR %s", ref,
                         )
@@ -239,7 +239,7 @@ async def receive_github_webhook(request: Request):
                         ))
                         return {"status": "resolution_queued"}
 
-                from rollback import plan_rollback
+                from app.pipelines.rollback import plan_rollback
                 logger.info(
                     "Received deployment failure for %s, planning rollback...", sha[:8],
                 )
@@ -270,7 +270,7 @@ async def receive_github_webhook(request: Request):
                 ws.id, settings.database_path,
             )
             if not existing_integration or not existing_integration.github_installation_id:
-                from models import Integration
+                from app.models import Integration
                 integration = Integration(
                     workspace_id=ws.id,
                     github_installation_id=installation_id,
@@ -293,7 +293,7 @@ async def receive_github_webhook(request: Request):
         for ws in workspaces:
             integration = await db.get_integration(ws.id, settings.database_path)
             if integration and integration.github_installation_id == installation_id:
-                from models import Integration
+                from app.models import Integration
                 cleared = Integration(workspace_id=ws.id, github_installation_id="")
                 await db.upsert_integration(cleared, settings.database_path)
                 logger.info(

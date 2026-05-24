@@ -10,7 +10,7 @@ For deeper, historical implementation notes, see `docs/archive/KT.md`.
 
 ## 1. Current Status
 
-The engine has been overhauled in two passes:
+The engine has been overhauled in three passes:
 
 1. **Database**: SQLite → PostgreSQL (asyncpg + Alembic migrations).
 2. **Application layout**: monolithic `main.py` (~1000 LOC) → routers
@@ -18,6 +18,11 @@ The engine has been overhauled in two passes:
    `app/schemas/`, shared config/auth helpers under `app/core/`.
 3. **Dashboard**: server-rendered vanilla HTML in `static/` → a React
    18 + TypeScript SPA under `web/` (Vite, TanStack Query, React Router).
+4. **Repo restructure (May 2026)**: every legacy module that used to sit
+   flat at the repo root (`pipeline.py`, `models.py`, `genai_client.py`,
+   …) is now organised under `app/pipelines/`, `app/integrations/`,
+   `app/llm/`, `app/code_analysis/`, `app/qa_agents/`, `app/db/`. The
+   only Python file at the repo root is `main.py`.
 
 What's done:
 
@@ -34,6 +39,8 @@ What's done:
   `/api/github/link`, `/api/integrations/status`, `/stream`, and the
   React SPA serving routes.
 - Multi-stage Dockerfile and `docker compose up`-ready stack.
+- Every domain module imports from the `app.` namespace; no
+  compatibility shims left at the old root paths.
 
 What's still owed (future work, not blocking):
 
@@ -49,53 +56,90 @@ What's still owed (future work, not blocking):
 ```
 slothops-engine/
 ├── main.py                    FastAPI entry. Lifespan, SSE log bridge,
-│                              SPA serving, router wiring.
-├── app/                       New layered app code.
-│   ├── api/                   Routers (one per resource).
-│   ├── core/                  config.py, security.py, deps.py.
-│   ├── services/              Aggregation / business logic above CRUD.
-│   └── schemas/               Pydantic view models for the dashboard.
+│                              SPA serving, router wiring. The only
+│                              Python file at the repo root.
 │
-├── pipeline.py                Sentry-issue remediation orchestrator.
-├── qa_pipeline.py             Post-PR QA runner.
-├── qa_agents/                 Six QA agents (static, functionality,
-│                              regression, performance, stress, vapt).
-├── qa_resolution.py           LLM-driven auto-fix for failed QA runs.
-├── rollback.py                Plan / execute production rollbacks.
-├── resolution.py              Re-cycle rollback PRs on deploy failure.
+├── app/                       All engine code lives here.
+│   ├── api/                       Routers (one per resource).
+│   ├── core/                      config.py, security.py, deps.py.
+│   ├── services/                  Aggregation / business logic above CRUD.
+│   ├── schemas/                   Pydantic view models for the dashboard.
+│   │
+│   ├── models.py                  Pydantic models + enums (domain types).
+│   ├── auth.py                    JWT issue/verify + bcrypt password hashing.
+│   ├── database.py                Compatibility facade; every call-site
+│   │                              imports `from app import database as db`.
+│   ├── sse_manager.py             In-process pub/sub for SSE.
+│   ├── policy.py                  Per-repo policy resolution.
+│   │
+│   ├── db/                        SQLModel data layer.
+│   │   ├── engine.py              async SQLAlchemy engine factory.
+│   │   ├── crud.py                Per-model query helpers.
+│   │   └── models.py              SQLModel ORM definitions.
+│   │
+│   ├── pipelines/                 Orchestrators (one per flow).
+│   │   ├── pipeline.py            Sentry issue → fix PR.
+│   │   ├── qa_pipeline.py         PR → QA report.
+│   │   ├── qa_triage.py           Decide required vs advisory agents.
+│   │   ├── qa_resolution.py       LLM-driven auto-fix for failed QA.
+│   │   ├── rollback.py            Plan / execute production rollbacks.
+│   │   └── resolution.py          Re-cycle rollback PRs on deploy failure.
+│   │
+│   ├── integrations/              External APIs.
+│   │   ├── github_app.py          GitHub App auth + repo handles.
+│   │   ├── github_automation.py   PR creation, review comments.
+│   │   ├── sentry_parser.py       Sentry webhook → IssueRecord + frames.
+│   │   ├── webhook_security.py    HMAC signature verification.
+│   │   └── email_sender.py        SMTP notifications.
+│   │
+│   ├── llm/                       LLM glue.
+│   │   ├── client.py              Provider fallback chain.
+│   │   ├── fixer.py               Fix-generation prompt + retry logic.
+│   │   ├── classifier.py          Code / infra / dependency / unknown.
+│   │   ├── code_reviewer.py       (advisory — not yet wired into a flow).
+│   │   ├── style_reviewer.py      (advisory — not yet wired).
+│   │   └── pr_insights.py         (advisory — not yet wired).
+│   │
+│   ├── code_analysis/             Code-understanding utilities.
+│   │   ├── code_fetcher.py        Pull source context from GitHub.
+│   │   ├── fingerprint.py         Dedupe-key + history check.
+│   │   ├── redactor.py            Strip secrets from prompts.
+│   │   ├── stack_detector.py      Infer language / framework from repo.
+│   │   ├── build_fixer.py         Heuristics + LLM for build errors.
+│   │   ├── command_runner.py      Shell-exec helper used by QA agents.
+│   │   ├── deployment_logs.py     Pull CI / deploy logs from GitHub.
+│   │   └── call_chain.py          (advisory — not yet wired).
+│   │
+│   └── qa_agents/                 Six QA agents.
+│       ├── static_analysis.py
+│       ├── functionality.py
+│       ├── regression.py
+│       ├── performance.py
+│       ├── stress_test.py
+│       └── vapt.py
 │
-├── llm_fixer.py               Fix-generation prompt + retry logic.
-├── classifier.py              Code / infra / dependency / unknown.
-├── code_fetcher.py            Pull source context from GitHub.
-├── genai_client.py            LLM provider fallback chain.
-├── github_app.py              GitHub App auth + repo handles.
-├── github_automation.py       PR creation, review comments.
-├── sentry_parser.py           Sentry webhook → IssueRecord + frames.
-├── webhook_security.py        HMAC signature verification.
-├── sse_manager.py             In-process pub/sub for SSE.
-├── policy.py                  Per-repo policy resolution.
-├── models.py                  Pydantic models + enums.
+├── alembic/                       Migrations.
+├── tests/                         pytest suite (incl. test_runner.py
+│                                  imported at runtime by pipeline.py).
+├── web/                           React dashboard (Vite + TS).
+│   ├── src/api/                       API client.
+│   ├── src/app/                       App shell + router.
+│   ├── src/pages/                     Page components.
+│   └── src/lib/                       apiFetch helper, token storage.
 │
-├── database.py                Compatibility facade. All call-sites
-│                              go through here.
-├── db/                        Actual data layer.
-│   ├── engine.py              async SQLAlchemy engine factory.
-│   ├── crud.py                Per-model query helpers.
-│   └── models.py              SQLModel ORM definitions.
-├── alembic/                   Migrations.
-│
-├── web/                       React dashboard (Vite + TS).
-│   ├── src/api/               API client.
-│   ├── src/app/               App shell + router.
-│   ├── src/pages/             Page components.
-│   └── src/lib/               apiFetch helper, token storage.
-│
-├── docker-compose.yml         Postgres + engine.
-├── Dockerfile                 Multi-stage: bun build → python runtime.
-├── alembic.ini                Migration config.
-├── requirements.txt           Python deps.
-└── docs/archive/              Historical KT notes.
+├── docs/                          Historical KT notes (`docs/archive/`).
+├── docker-compose.yml             Postgres + engine.
+├── Dockerfile                     Multi-stage: bun build → python runtime.
+├── alembic.ini                    Migration config.
+└── requirements.txt               Python deps.
 ```
+
+Import conventions after the May 2026 restructure:
+
+- Inside the repo, **everything** comes from the `app.` namespace
+  (`from app.models import …`, `from app.pipelines.pipeline import …`).
+- `main.py` is the single exception that sits at the repo root.
+- There are no compatibility shims at the old paths — the tree is clean.
 
 ---
 

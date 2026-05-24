@@ -11,16 +11,16 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-import database as db
-from build_fixer import generate_build_fix
-from deployment_logs import fetch_deployment_logs
-from github_app import get_repo_for_installation
-from models import AuditAction, AuditEvent, ResolutionRecord, ResolutionStatus
-from policy import get_effective_policy
+from app import database as db
+from app.code_analysis.build_fixer import generate_build_fix
+from app.code_analysis.deployment_logs import fetch_deployment_logs
+from app.integrations.github_app import get_repo_for_installation
+from app.models import AuditAction, AuditEvent, ResolutionRecord, ResolutionStatus
+from app.policy import get_effective_policy
 from github import GithubException
-from sse_manager import broadcast
-from email_sender import send_resolution_notification_email
-from stack_detector import detect_stack
+from app.sse_manager import broadcast
+from app.integrations.email_sender import send_resolution_notification_email
+from app.code_analysis.stack_detector import detect_stack
 
 logger = logging.getLogger("slothops.resolution")
 

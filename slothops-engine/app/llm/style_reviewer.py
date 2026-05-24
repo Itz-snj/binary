@@ -63,7 +63,7 @@ async def review_against_preferences(
     )
 
     try:
-        from genai_client import generate_with_fallback
+        from app.llm.client import generate_with_fallback
         raw, _ = await generate_with_fallback(
             prompt=prompt,
             response_mime_type="application/json"

@@ -6,7 +6,7 @@ for deep-call-chain tracing on issue recurrence.
 
 from __future__ import annotations
 
-from models import CallFrame
+from app.models import CallFrame
 
 _MAX_CALL_CHAIN_FILES = 5
 

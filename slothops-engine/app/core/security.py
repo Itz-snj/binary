@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
-import auth as _auth_module
+from app import auth as _auth_module
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
 

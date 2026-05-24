@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-from genai_client import generate_with_fallback
+from app.llm.client import generate_with_fallback
 
 logger = logging.getLogger("slothops.pr_insights")
 

@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from db.models import (
+from app.db.models import (
     AuditEventTable,
     DeveloperConfigTable,
     IntegrationTable,
@@ -31,7 +31,7 @@ from db.models import (
     WorkspaceTable,
     WorkspaceUserTable,
 )
-from models import (
+from app.models import (
     AuditEvent,
     Integration,
     IssueRecord,

@@ -6,8 +6,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 
-import database as db
-from webhook_security import extract_github_delivery_id, verify_github_signature
+from app import database as db
+from app.integrations.webhook_security import extract_github_delivery_id, verify_github_signature
 
 
 def test_github_signature_valid():

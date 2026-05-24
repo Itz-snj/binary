@@ -12,7 +12,7 @@ from typing import Optional
 
 from github import GithubException
 
-from models import IssueRecord, LLMFixResponse
+from app.models import IssueRecord, LLMFixResponse
 
 logger = logging.getLogger("slothops.github_automation")
 
@@ -216,9 +216,9 @@ async def handle_human_pr_review(
     Handle a manually raised PR: fetch the PR files, run style and architecture
     reviews, and post the results back to the PR.
     """
-    import database as db
-    from github_app import get_repo_for_installation
-    from pr_insights import generate_pr_insights
+    from app import database as db
+    from app.integrations.github_app import get_repo_for_installation
+    from app.llm.pr_insights import generate_pr_insights
     
     # 1. Setup GitHub Client
     installation_id = payload.get("installation", {}).get("id")

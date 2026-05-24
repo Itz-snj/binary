@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-import llm_fixer
-from models import IssueRecord
+from app.llm import fixer as llm_fixer
+from app.models import IssueRecord
 
 
 def _fix_payload():

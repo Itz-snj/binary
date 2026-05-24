@@ -6,12 +6,12 @@ import json
 import logging
 import uuid
 
-import database as db
-from genai_client import generate_with_fallback
-from github_app import get_repo_for_installation
-from llm_fixer import extract_json_object
-from models import AuditAction, AuditEvent
-from sse_manager import broadcast
+from app import database as db
+from app.llm.client import generate_with_fallback
+from app.integrations.github_app import get_repo_for_installation
+from app.llm.fixer import extract_json_object
+from app.models import AuditAction, AuditEvent
+from app.sse_manager import broadcast
 
 logger = logging.getLogger("slothops.qa_resolution")
 

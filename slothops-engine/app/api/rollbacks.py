@@ -13,10 +13,10 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-import database as db
+from app import database as db
 from app.core.config import load_settings
 from app.core.security import get_current_workspace
-from models import AuditAction, AuditEvent, RollbackStatus
+from app.models import AuditAction, AuditEvent, RollbackStatus
 
 logger = logging.getLogger("slothops.api.rollbacks")
 
@@ -83,7 +83,7 @@ async def approve_rollback_endpoint(
         target_id=rollback_id,
         metadata_json={"reason": req.reason},
     ), settings.database_path)
-    from rollback import execute_rollback
+    from app.pipelines.rollback import execute_rollback
     asyncio.create_task(execute_rollback(
         rollback_id=rollback_id,
         workspace_id=workspace_id,

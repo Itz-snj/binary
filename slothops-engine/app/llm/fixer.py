@@ -11,9 +11,9 @@ import logging
 import re
 from typing import Optional
 
-from genai_client import generate_with_fallback
-from models import CallFrame, IssueRecord, LLMFixResponse
-from redactor import redact
+from app.llm.client import generate_with_fallback
+from app.models import CallFrame, IssueRecord, LLMFixResponse
+from app.code_analysis.redactor import redact
 
 logger = logging.getLogger("slothops.llm_fixer")
 
@@ -189,7 +189,7 @@ async def generate_fix(
             fix = _parse_response(raw_content)
 
             if hasattr(fix, "deep_scan_needed") and fix.deep_scan_needed and hasattr(fix, "deep_scan_files") and fix.deep_scan_files:
-                from code_fetcher import fetch_requested_files
+                from app.code_analysis.code_fetcher import fetch_requested_files
                 logger.info(
                     "[%s] LLM requested second-pass deep scan for %d file(s): %s",
                     issue.id[:8],
