@@ -110,6 +110,9 @@ app = FastAPI(
     description="Production-aware automated bug remediation pipeline",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
 )
 
 WEB_DIST_DIR = os.path.join(os.path.dirname(__file__), "web", "dist")
@@ -321,3 +324,13 @@ async def sse_stream(token: str):
             }
 
     return EventSourceResponse(event_generator())
+
+
+@app.get("/{spa_path:path}")
+async def serve_spa(spa_path: str):
+    """Catch-all: return index.html for any path the React Router owns (e.g. /docs, /login, /overview)."""
+    index_path = os.path.join(WEB_DIST_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return JSONResponse({"message": "Dashboard build not found."}, status_code=404)
+

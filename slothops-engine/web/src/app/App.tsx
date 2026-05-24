@@ -1,5 +1,7 @@
 import { Route, Routes } from "react-router-dom";
 import AppShell from "./AppShell";
+import LandingPage from "../pages/Landing";
+import DocsPage from "../pages/Docs";
 import OverviewPage from "../pages/Overview";
 import LoginPage from "../pages/Login";
 import ReposPage from "../pages/Repos";
@@ -11,9 +13,11 @@ import SettingsPage from "../pages/Settings";
 export default function App() {
   return (
     <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/docs" element={<DocsPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route element={<AppShell />}>
-        <Route path="/" element={<OverviewPage />} />
+        <Route path="/overview" element={<OverviewPage />} />
         <Route path="/repos" element={<ReposPage />} />
         <Route path="/qa" element={<QAPage />} />
         <Route path="/rollbacks" element={<RollbacksPage />} />
