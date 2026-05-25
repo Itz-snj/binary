@@ -37,37 +37,43 @@ A React dashboard gives operators live visibility over every issue, PR, QA repor
 ## Architecture
 
 ```mermaid
-graph TD
-    %% Core Entities
-    Sentry[Sentry Webhook]
-    FastAPI[SlothOps Engine API]
-    LLM[Gemini AI Fix Generator]
-    QA[6 Pre-Merge QA Agents]
-    Rollback[Rollback Orchestrator]
-    DB[(PostgreSQL 16)]
-    UI[React Dashboard]
+flowchart TD
+    %% Actors & Core Systems
+    Dev((Developer))
     GH[GitHub Repository]
+    Engine{SlothOps Engine}
+    LLM[Gemini AI]
+    QA[6 Custom QA Agents]
+    Rollback[Rollback Orchestrator]
+    Prod[Production]
+    Sentry[Sentry Webhook]
 
-    %% Prod Phase
-    Sentry -- 1. Crash Data --> FastAPI
-    FastAPI -- 2. Fetch Code & Context --> LLM
-    LLM -- 3. Open Fix PR --> GH
+    %% 1. Dev Phase
+    Dev -->|1. Push Code / Raise PR| GH
+    GH -->|2. Webhook| Engine
     
-    %% QA Phase
-    GH -- 4. PR Pushed/Updated --> FastAPI
-    FastAPI -- 5. Trigger Pipeline --> QA
-    QA -- 6. Block/Allow Merge --> GH
+    %% 2. PR Review & QA Phase
+    Engine -->|3. Arch Review & Suggestions| LLM
+    LLM -->|4. PR Comments| GH
+    Engine -->|5. Trigger| QA
+    QA -->|6. Pass/Fail Status| GH
     
-    %% Pre-Prod / Rollback Phase
-    GH -- 7. Deploy Failed --> FastAPI
-    FastAPI -- 8. Initiate Rescue --> Rollback
-    Rollback -- 9. Revert & Auto-Fix --> GH
+    %% 3. Deploy & Pre-Prod Phase
+    GH -->|7. Merge to Main| Deploy[CI/CD Build]
+    Deploy -->|8. Build/Deploy Failed| Engine
+    Engine -->|9. Auto-Revert / Policy| Rollback
+    Rollback -->|10. Execute Revert| GH
     
-    %% Infrastructure
-    FastAPI -.-> DB
-    QA -.-> DB
-    Rollback -.-> DB
-    DB -.-> UI
+    %% 4. Prod Phase
+    Deploy -->|11. Success| Prod
+    Prod -->|12. Runtime Error| Sentry
+    Sentry -->|13. Crash Data| Engine
+    
+    %% 5. Auto-Remediation Loop
+    Engine -->|14. File-chaining & Context| LLM
+    LLM -->|15a. Fix Generated| FixPR[Draft Fix PR]
+    FixPR -.->|Restarts Cycle| GH
+    LLM -->|15b. Fix Failed| Report[Notify Developer]
 ```
 
 ---
@@ -167,40 +173,36 @@ The full interactive reference is at **http://localhost:8000/api/docs** (Swagger
 
 ---
 
-## The Four Flows
+## The Continuous Lifecycle
 
-### 1. Sentry issue → fix PR
+SlothOps isn't just an error handler—it's deeply integrated into the entire Software Development Life Cycle (SDLC):
 
-```
-Sentry webhook → fingerprint / dedupe → classify → fetch code context
-  → LLM fix generation → open PR on GitHub
-  → QA pipeline triggered automatically
-```
-
-### 2. Pull request → QA report
-
-```
-GitHub PR opened/synchronize → triage (required vs advisory agents)
-  → 6 QA agents run concurrently
-  → aggregate verdict → set GitHub commit status
+### 1. Development & QA
+```text
+Dev pushes code → GitHub PR opened → SlothOps performs architectural review
+  → 6 QA agents run concurrently (VAPT, Stress, Regression, etc.)
+  → Commits status is set (merge allowed or blocked)
 ```
 
-Operators can `POST /api/qa-bypass/{id}` to override a failure or `POST /api/qa-resolve/{id}` to trigger LLM-driven auto-fix.
-
-### 3. Deploy failure → rollback
-
-```
-GitHub deployment_status failure → plan rollback (last-known-good SHA + policy)
-  → APPROVAL_REQUIRED mode → RollbackRecord(pending_approval)
-  → operator approves → execute (direct revert or rollback PR)
+### 2. Deployment & Rollback (Pre-Prod)
+```text
+PR merged → CI/CD deployment begins
+  → If deployment fails (GitHub deployment_status webhook):
+  → SlothOps Rollback Orchestrator kicks in (auto-reverts or creates rollback PR)
 ```
 
-### 4. QA failure → auto-resolve
-
+### 3. Production Remediation (Sentry)
+```text
+Deployment succeeds → Application runs in production
+  → Unhandled exception occurs → Sentry fires webhook
+  → SlothOps deduplicates, fetches call-chain context, and invokes the LLM
 ```
-POST /api/qa-resolve/{id} → read failing agent logs
-  → LLM generates corrective commits → push to PR branch
-  → new QA cycle triggered automatically
+
+### 4. Auto-Fix Loop
+```text
+LLM successfully generates fix → Draft PR is created
+  → The cycle restarts at Step 1 for the new fix PR!
+(If the LLM fails to find a fix, a detailed report is sent back to the developer).
 ```
 
 ---
