@@ -11,7 +11,7 @@
 [![Docker](https://img.shields.io/badge/docker-compose-2496ed?style=flat-square)](https://docs.docker.com/compose/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)](LICENSE)
 
-[Live Docs →](http://localhost:8000/docs) · [API Reference](#api-reference) · [Developer Guide](docs/DEVELOPER_GUIDE.md) · [Contributing](#contributing)
+[Live API Docs →](http://localhost:8000/api/docs) · [API Reference](#api-reference) · [Developer Guide](docs/DEVELOPER_GUIDE.md) · [Contributing](#contributing)
 
 </div>
 
@@ -36,37 +36,38 @@ A React dashboard gives operators live visibility over every issue, PR, QA repor
 
 ## Architecture
 
-```
-┌─────────────┐   webhook    ┌──────────────────────────────────────────────────┐
-│   Sentry    │ ──────────► │              SlothOps Engine (FastAPI)            │
-└─────────────┘             │                                                    │
-                            │  app/api/webhooks.py                               │
-                            │      │                                             │
-                            │      ├─► app/pipelines/pipeline.py                 │
-                            │      │       ├─ app/llm/classifier.py             │
-                            │      │       ├─ app/code_analysis/code_fetcher.py │
-                            │      │       ├─ app/llm/fixer.py                  │
-                            │      │       └─ app/integrations/github_automation │
-                            │      │                                             │
-                            │      ├─► app/pipelines/qa_pipeline.py              │
-                            │      │       └─ app/qa_agents/{6 agents}          │
-                            │      │                                             │
-                            │      └─► app/pipelines/rollback.py                 │
-                            │                                                    │
-┌─────────────┐   webhook    │  app/api/webhooks.py                               │
-│   GitHub    │ ──────────► │  (pull_request, deployment_status events)          │
-└─────────────┘             └──────────────────────────────────────────────────┘
-                                         │
-                                         ▼
-                            ┌────────────────────────┐
-                            │   PostgreSQL 16         │
-                            │   (Alembic migrations)  │
-                            └────────────────────────┘
-                                         │
-                            ┌────────────────────────┐
-                            │   React Dashboard       │
-                            │   (Vite + TanStack)     │
-                            └────────────────────────┘
+```mermaid
+graph TD
+    %% Core Entities
+    Sentry[Sentry Webhook]
+    FastAPI[SlothOps Engine API]
+    LLM[Gemini AI Fix Generator]
+    QA[6 Pre-Merge QA Agents]
+    Rollback[Rollback Orchestrator]
+    DB[(PostgreSQL 16)]
+    UI[React Dashboard]
+    GH[GitHub Repository]
+
+    %% Prod Phase
+    Sentry -- 1. Crash Data --> FastAPI
+    FastAPI -- 2. Fetch Code & Context --> LLM
+    LLM -- 3. Open Fix PR --> GH
+    
+    %% QA Phase
+    GH -- 4. PR Pushed/Updated --> FastAPI
+    FastAPI -- 5. Trigger Pipeline --> QA
+    QA -- 6. Block/Allow Merge --> GH
+    
+    %% Pre-Prod / Rollback Phase
+    GH -- 7. Deploy Failed --> FastAPI
+    FastAPI -- 8. Initiate Rescue --> Rollback
+    Rollback -- 9. Revert & Auto-Fix --> GH
+    
+    %% Infrastructure
+    FastAPI -.-> DB
+    QA -.-> DB
+    Rollback -.-> DB
+    DB -.-> UI
 ```
 
 ---
@@ -87,7 +88,7 @@ cp .env.example .env      # fill in keys (all optional for local exploration)
 docker compose up --build
 ```
 
-Then open **http://localhost:8000** for the dashboard and **http://localhost:8000/docs** for the API explorer.
+Then open **http://localhost:8000** for the Midnight Onyx landing page and dashboard, **http://localhost:8000/docs** for local spin-up docs, and **http://localhost:8000/api/docs** for the API explorer.
 
 ### Verify it works
 
@@ -152,7 +153,7 @@ Copy `.env.example` to `.env`. All keys are optional for local exploration — m
 
 ## API Reference
 
-The full interactive reference is at **http://localhost:8000/docs** (Swagger UI) once the stack is running. Key endpoint groups:
+The full interactive reference is at **http://localhost:8000/api/docs** (Swagger UI) once the stack is running. Key endpoint groups:
 
 | Group | Base path | What |
 |---|---|---|
